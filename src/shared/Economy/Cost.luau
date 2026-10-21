@@ -1,0 +1,130 @@
+--!strict
+--[[
+	Cost -- what the next units of a business are worth.
+
+	Each unit costs the previous one times a fixed coefficient between 1.07 and 1.15. That
+	makes the price of unit n a geometric term and the price of a batch a geometric series.
+
+	Buying ten or a hundred at once gives **no discount** in the source game; the bulk price is
+	exactly what ten or a hundred single purchases would total. Implementing it as a closed-form
+	series rather than a loop is purely about not iterating 400 times per UI frame -- the answer
+	is identical.
+
+	Pure module: no services, no clock, no RNG.
+]]
+
+local BigNumber = require(script.Parent.BigNumber)
+local Types = require(script.Parent.Parent.Types)
+
+type BigNumber = Types.BigNumber
+type BusinessConfig = Types.BusinessConfig
+
+local Cost = {}
+
+--[[
+	Price of unit number `n`, where n counts from 1.
+
+	`unitCost(config, 1)` is the initial cost; `unitCost(config, 2)` is the initial cost times
+	the coefficient. The exponent is `n - 1`, and an off-by-one here is silent -- every price in
+	the game drifts by one coefficient step and nothing crashes.
+]]
+function Cost.unitCost(config: BusinessConfig, n: number): BigNumber
+	if n < 1 then
+		error("Cost.unitCost: n must be at least 1", 2)
+	end
+
+	local growth = BigNumber.powNumber(config.coefficient, n - 1)
+	return BigNumber.mul(config.initialCost, growth)
+end
+
+--[[
+	Total price of buying `quantity` more units when `owned` are already held.
+
+	The next unit is number `owned + 1`, so the batch runs from `c^owned` to `c^(owned+quantity-1)`
+	and sums to:
+
+	    initialCost * c^owned * (c^quantity - 1) / (c - 1)
+
+	A finite geometric series. With c > 1 this is exact to the double's precision at every scale
+	because BigNumber keeps the mantissa normalised.
+]]
+function Cost.bulkCost(config: BusinessConfig, owned: number, quantity: number): BigNumber
+	if quantity <= 0 then
+		return BigNumber.zero
+	end
+	if owned < 0 then
+		error("Cost.bulkCost: owned cannot be negative", 2)
+	end
+
+	local coefficient = config.coefficient
+	local base = BigNumber.mul(config.initialCost, BigNumber.powNumber(coefficient, owned))
+	local seriesNumerator = BigNumber.sub(BigNumber.powNumber(coefficient, quantity), BigNumber.one)
+	local series = BigNumber.divNumber(seriesNumerator, coefficient - 1)
+
+	return BigNumber.mul(base, series)
+end
+
+--[[
+	How many units `available` money can buy, on top of `owned`.
+
+	Inverts the series rather than stepping one unit at a time, so a "max buy" button stays
+	cheap even when the answer is in the thousands:
+
+	    quantity = floor( log(1 + available * (c-1) / (initialCost * c^owned)) / log(c) )
+
+	Done in log space throughout, because `available / base` can be astronomically large.
+	Returns 0 when the next single unit is unaffordable.
+]]
+function Cost.maxAffordable(
+	config: BusinessConfig,
+	owned: number,
+	available: BigNumber,
+	unitCap: number
+): number
+	if BigNumber.isZero(available) or available.mantissa < 0 then
+		return 0
+	end
+
+	local coefficient = config.coefficient
+	local base = BigNumber.mul(config.initialCost, BigNumber.powNumber(coefficient, owned))
+	if BigNumber.lt(available, base) then
+		return 0
+	end
+
+	local ratio = BigNumber.div(available, base)
+	local scaled = BigNumber.mulNumber(ratio, coefficient - 1)
+	-- `scaled + 1` only matters while scaled is small; past that the 1 is below precision and
+	-- BigNumber.add drops it, which is correct rather than approximate.
+	local inner = BigNumber.add(scaled, BigNumber.one)
+
+	local quantity = math.floor(BigNumber.log10(inner) / math.log10(coefficient))
+	quantity = math.max(quantity, 0)
+
+	local headroom = unitCap - owned
+	if quantity > headroom then
+		quantity = math.max(headroom, 0)
+	end
+
+	-- The log is inexact at the boundary, so step back until the batch is genuinely affordable.
+	-- At most a couple of iterations in practice.
+	while quantity > 0 and BigNumber.gt(Cost.bulkCost(config, owned, quantity), available) do
+		quantity -= 1
+	end
+
+	return quantity
+end
+
+--[[
+	Apply the unit-cost discounts the source game grants.
+
+	Accountants cost angels and take 10% off; the late-game discount managers take 99.999% off.
+	They stack multiplicatively, and both are lost on an angel reset.
+]]
+function Cost.applyDiscount(price: BigNumber, discountMultiplier: number): BigNumber
+	if discountMultiplier == 1 then
+		return price
+	end
+	return BigNumber.mulNumber(price, discountMultiplier)
+end
+
+return table.freeze(Cost)
