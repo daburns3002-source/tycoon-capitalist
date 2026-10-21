@@ -42,10 +42,9 @@ Source game for verification: `C:\Program Files (x86)\Steam\steamapps\common\AdV
 
 ## Why the repo is public
 
-GitHub refuses branch protection on a private repo without a Pro subscription, and branch
-protection is the whole mechanism that keeps Codex in the loop: without it, `main` accepts direct
-pushes and the review gate is advisory. Public was the cheaper trade. `quiver` is public for the
-same reason.
+GitHub refuses branch protection on a private repo without a Pro subscription. Without protection
+`main` accepts direct pushes and nothing is gated at all, so public was the cheaper trade.
+`quiver` is public for the same reason.
 
 ## Branch protection on `main`
 
@@ -54,12 +53,41 @@ same reason.
 | Changes must go through a PR | yes |
 | Required approving reviews | 0 — Codex reviews by comment, and GitHub will not let you approve your own PR |
 | Required status check | `Lint, format and build`, strict (branch must be up to date) |
-| Conversation resolution | required — **Codex's comments must be resolved before merge** |
+| Conversation resolution | required — no *open* thread can be left unresolved at merge |
 | Linear history | required |
 | Force pushes / deletions | blocked |
 | Applies to admins | **yes** — verified by a rejected direct push as the repo owner |
 
-This means *you cannot push to `main` directly*, by design. To bypass in an emergency:
+### What this actually enforces, and what it does not
+
+Worth being precise, because it is easy to assume more than is true. Codex raised this on the PR
+that added this section, and it was right.
+
+**Enforced by GitHub:** every change goes through a PR; `main` rejects direct pushes even from the
+owner; CI must be green and the branch must be up to date; no force pushes; no merge commits; and
+any review thread that *exists* must be resolved before merging.
+
+**Not enforced by GitHub:**
+
+- **That a review happened at all.** With zero required approvals, a PR that Codex never comments
+  on satisfies every rule above and merges clean. Codex posts reviews and comments, not check
+  runs, so there is nothing to add as a required status check.
+- **That a finding was addressed rather than dismissed.** The PR author has write access, so they
+  can resolve their own threads. Conversation resolution stops a thread being *forgotten*; it
+  cannot tell the difference between fixed and waved away.
+
+So the review gate is a convention, not a mechanism. The things that genuinely cannot be skipped
+are CI and the no-direct-push rule — which is why the project's own rules are machine-checked in
+CI (`scripts/guard.py`) rather than left to a reviewer's attention.
+
+Required approvals stays at **0** deliberately: GitHub will not let the repo owner approve their
+own PR, so any non-zero count would deadlock every PR on a solo project. The alternative worth
+revisiting if this ever gets a second human is `required_approving_review_count: 1` with
+CODEOWNERS.
+
+### Emergency bypass
+
+*You cannot push to `main` directly*, by design. To bypass:
 
 ```bash
 gh api -X DELETE repos/daburns3002-source/tycoon-capitalist/branches/main/protection/enforce_admins
