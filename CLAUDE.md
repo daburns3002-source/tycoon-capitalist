@@ -132,9 +132,15 @@ renderer and a test harness, driven through Rojo and the Studio MCP server.
 1. Work on a branch. `main` is protected and rejects direct pushes, including from the owner.
 2. One phase per PR series. The PR template asks for the phase — fill it in.
 3. Open the PR, let CI run, let Codex review.
-4. Resolve every Codex conversation before merge. Conversation resolution is a required check.
-5. Squash merge, delete the branch.
-6. At a **PLAYTEST** gate in the roadmap, stop and hand the build over. Do not start the next
+4. **Do not merge before Codex has actually reviewed.** Branch protection cannot enforce this:
+   with zero required approvals a PR Codex never commented on merges clean, and Codex posts
+   reviews rather than check runs so there is nothing to require as a status check. This step is
+   a rule, not a gate.
+5. Resolve every Codex conversation before merge — that part *is* a required check. But resolving
+   a thread is not the same as fixing the finding, and nothing stops the author doing the former
+   without the latter. Reply saying what changed, or say why it did not.
+6. Squash merge, delete the branch.
+7. At a **PLAYTEST** gate in the roadmap, stop and hand the build over. Do not start the next
    phase on the assumption that the playtest will pass.
 
 ## Repo layout
