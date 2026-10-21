@@ -171,6 +171,51 @@ local function testCost(): (number, number)
 		50
 	)
 
+	-- The property that matters: given exactly the price of k units, max-buy must return k, for
+	-- every business and at every scale. Codex caught this failing at exact boundaries -- the
+	-- log can land a hair under the integer, and a decrement-only correction has no way back up,
+	-- so the player is refused a unit they can exactly afford.
+	--
+	-- Swept rather than spot-checked, because the failure depends on where the floating-point
+	-- logarithm happens to land and a single case proves nothing about the next coefficient.
+	local boundaryFailures = 0
+	local firstFailure: string? = nil
+	for _, config in Businesses.list do
+		for _, owned in { 0, 1, 24, 25, 99, 400 } do
+			for _, quantity in { 1, 2, 9, 10, 25, 100 } do
+				local exact = Cost.bulkCost(config, owned, quantity)
+				local answer = Cost.maxAffordable(config, owned, exact, Businesses.maxUnits)
+				if answer ~= quantity then
+					boundaryFailures += 1
+					if firstFailure == nil then
+						firstFailure = string.format(
+							"%s owned=%d wanted=%d got=%d",
+							config.id,
+							owned,
+							quantity,
+							answer
+						)
+					end
+				end
+			end
+		end
+	end
+	t:record(
+		"maxAffordable is exact at every batch boundary (360 cases)",
+		boundaryFailures == 0,
+		if firstFailure
+			then string.format("%d failures, first: %s", boundaryFailures, firstFailure)
+			else nil
+	)
+
+	-- One short of a boundary must still round down, so the upward correction cannot overshoot.
+	local justUnder = BigNumber.sub(Cost.bulkCost(carWash, 7, 10), BigNumber.fromNumber(0.01))
+	t:equals(
+		"a penny short of ten still buys nine",
+		Cost.maxAffordable(carWash, 7, justUnder, Businesses.maxUnits),
+		9
+	)
+
 	-- The accountant's 10% discount.
 	t:equalsApprox(
 		"10% accountant discount",

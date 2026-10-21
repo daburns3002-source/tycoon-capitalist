@@ -100,15 +100,29 @@ function Cost.maxAffordable(
 	local quantity = math.floor(BigNumber.log10(inner) / math.log10(coefficient))
 	quantity = math.max(quantity, 0)
 
-	local headroom = unitCap - owned
+	local headroom = math.max(unitCap - owned, 0)
 	if quantity > headroom then
-		quantity = math.max(headroom, 0)
+		quantity = headroom
 	end
 
-	-- The log is inexact at the boundary, so step back until the batch is genuinely affordable.
-	-- At most a couple of iterations in practice.
+	-- The logarithm is inexact near a batch boundary, and it can err in either direction, so
+	-- settle the answer against the exact series rather than trusting it.
+	--
+	-- Correcting only downward is a real bug: when `available` is exactly the price of ten
+	-- units, `log10` can land a hair under 10, floor to 9, and a decrement-only loop has no way
+	-- back up. The player is then refused a unit they can exactly afford -- which is precisely
+	-- the moment a max-buy button gets pressed, because it is how the UI shows "you can afford
+	-- ten". Both loops together are what make the result exact.
+	--
+	-- A couple of iterations at most: the log is wrong by rounding, not by magnitude.
 	while quantity > 0 and BigNumber.gt(Cost.bulkCost(config, owned, quantity), available) do
 		quantity -= 1
+	end
+	while
+		quantity < headroom
+		and BigNumber.lte(Cost.bulkCost(config, owned, quantity + 1), available)
+	do
+		quantity += 1
 	end
 
 	return quantity
