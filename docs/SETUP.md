@@ -26,14 +26,46 @@ Source game for verification: `C:\Program Files (x86)\Steam\steamapps\common\AdV
 
 ## Phase 0 done
 
+- Repo created at https://github.com/daburns3002-source/tycoon-capitalist, **public**
 - Toolchain ported forward from the `quiver` repo, which already had a green CI run
 - Rojo project maps `src/{shared,server,client}` and `tests` into the DataModel
 - Local gate passes end to end: `selene` clean, `stylua --check` clean, `rojo build` succeeds,
   `luau-lsp analyze` clean
+- GitHub Actions CI green on the first run, 20s: Selene, StyLua `--check`, `rojo build`,
+  sourcemap, `luau-lsp analyze`, artifact upload
+- Branch protection on `main`, enforced for admins too — verified by a rejected direct push
+- Squash-only merges, branch deleted on merge
 - `CLAUDE.md` and `AGENTS.md` written as a matched pair — builder and reviewer contracts
 - PR template points Codex at BigNumber correctness, economy fidelity and offline-accrual trust
 - `.gitattributes` pins LF so local and CI format checks agree
 - Docs: source-game teardown with exact tables, nine-phase roadmap, architecture
+
+## Why the repo is public
+
+GitHub refuses branch protection on a private repo without a Pro subscription, and branch
+protection is the whole mechanism that keeps Codex in the loop: without it, `main` accepts direct
+pushes and the review gate is advisory. Public was the cheaper trade. `quiver` is public for the
+same reason.
+
+## Branch protection on `main`
+
+| Rule | Setting |
+|---|---|
+| Changes must go through a PR | yes |
+| Required approving reviews | 0 — Codex reviews by comment, and GitHub will not let you approve your own PR |
+| Required status check | `Lint, format and build`, strict (branch must be up to date) |
+| Conversation resolution | required — **Codex's comments must be resolved before merge** |
+| Linear history | required |
+| Force pushes / deletions | blocked |
+| Applies to admins | **yes** — verified by a rejected direct push as the repo owner |
+
+This means *you cannot push to `main` directly*, by design. To bypass in an emergency:
+
+```bash
+gh api -X DELETE repos/daburns3002-source/tycoon-capitalist/branches/main/protection/enforce_admins
+```
+
+Re-enable it with `-X POST` on the same path.
 
 ## Blocked on you
 
