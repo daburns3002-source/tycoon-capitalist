@@ -10,17 +10,24 @@ Architecture: `docs/ARCHITECTURE.md`. Setup state: `docs/SETUP.md`.
 
 **AdVenture Capitalist's exact economy inside a low-poly walkable Roblox tycoon.**
 
-The player walks a plot where each of the ten Earth businesses is a building that visibly grows
-with its unit count. Tap to collect, buy units, hit a milestone and watch the cycle time halve,
-hire a manager to make it passive, reset for Angel Investors when growth flattens.
+**The AdVenture Capitalist panel is the game; the plot is the shell around it.** The player walks
+up to a board on their plot, clicks into it, and the full idle game opens as a screen-filling
+panel: ten business rows, tap to collect, buy units, hit a milestone and watch the cycle time
+halve, hire a manager to make it passive, reset for Angel Investors when growth flattens.
+
+The buildings on the plot grow with their unit counts as a *display* of progress. No mechanics
+hang off them -- the panel is the single authoritative surface for the economy.
 
 The economy is copied to the digit. The 3D plot, the art direction and the social layer are new
 design work — the source game has no movement, no items, no teams and no ranked ladder.
 
 ## Where we are
 
-Phase 0 complete: repo, toolchain, CI, branch protection, docs. No game code yet.
-Next: Phase 1, the number system and the economy core. See `docs/ROADMAP.md`.
+Phase 1 complete: the number system and the economy core. `src/shared/Economy` holds BigNumber,
+Format, Cost, Cycle, Revenue and Angels; `src/shared/Config/Businesses.luau` holds the exact
+Earth table. All pure, all tested. Nothing is on screen yet, by design.
+
+Next: Phase 2, the board and the panel behind it. See `docs/ROADMAP.md`.
 
 ## Commands
 
@@ -32,6 +39,8 @@ rojo build -o build.rbxl         # build a place file
 selene src tests                 # lint
 stylua src tests                 # format
 stylua --check src tests         # what CI runs
+python scripts/guard.py          # the project's own non-negotiables, machine-checked
+python scripts/verify_economy.py # re-derive every economy anchor from the config
 rojo sourcemap default.project.json -o sourcemap.json
 luau-lsp analyze --sourcemap=sourcemap.json --defs=globalTypes.d.luau src tests
 ```
@@ -51,13 +60,23 @@ Known-good anchors to keep in the suite:
 
 | Assertion | Expected |
 |---|---|
-| 2nd Car Wash unit cost | $829.92 |
+| 2nd Car Wash unit cost | $820.80 |
 | First 100 Oil Companies, total | $319,433,276,243,943 |
 | First angel at lifetime earnings | ~$44,444,444,445 |
 | $1 quadrillion lifetime to angels | 150 |
 | $1 quintillion lifetime to angels | 4,743 |
-| 400 of every business, Oil cycle | ~9 s |
+| $1 sextillion lifetime to angels | 150,000 |
+| $1 septillion lifetime to angels | 4,743,416 |
+| 400 of every business, Oil cycle | exactly 9 s (36864 / 2^12) |
 | Lemonade Stand displayed 2nd price | $4.00 (base 4/1.07) |
+
+**The wiki is wrong about the Car Wash.** It states the second unit costs $829.92, which is
+728 × 1.14; the initial cost is 720, so the correct price is 720 × 1.14 = **$820.80**. Do not
+re-copy that figure. It is a reminder that the wiki is a secondary source and the Steam build
+is the primary one — when they disagree, open the game.
+
+The angel reference points all reproduce exactly from `floor(sqrt(lifetime / (400e9/9)))`, and
+the 100-Oil-Company series reproduces to the dollar, so those parts of the wiki are sound.
 
 ## Non-negotiables
 
@@ -113,9 +132,15 @@ renderer and a test harness, driven through Rojo and the Studio MCP server.
 1. Work on a branch. `main` is protected and rejects direct pushes, including from the owner.
 2. One phase per PR series. The PR template asks for the phase — fill it in.
 3. Open the PR, let CI run, let Codex review.
-4. Resolve every Codex conversation before merge. Conversation resolution is a required check.
-5. Squash merge, delete the branch.
-6. At a **PLAYTEST** gate in the roadmap, stop and hand the build over. Do not start the next
+4. **Do not merge before Codex has actually reviewed.** Branch protection cannot enforce this:
+   with zero required approvals a PR Codex never commented on merges clean, and Codex posts
+   reviews rather than check runs so there is nothing to require as a status check. This step is
+   a rule, not a gate.
+5. Resolve every Codex conversation before merge — that part *is* a required check. But resolving
+   a thread is not the same as fixing the finding, and nothing stops the author doing the former
+   without the latter. Reply saying what changed, or say why it did not.
+6. Squash merge, delete the branch.
+7. At a **PLAYTEST** gate in the roadmap, stop and hand the build over. Do not start the next
    phase on the assumption that the playtest will pass.
 
 ## Repo layout

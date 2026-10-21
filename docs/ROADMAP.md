@@ -32,28 +32,41 @@ Oil Company cycle at ~9s. Verified against the Steam build.
 
 ---
 
-## Phase 2 — One plot, one building, walkable  **PLAYTEST**
+## Phase 2 — The board, and the panel behind it  **PLAYTEST**
 
-The feel test. Grey boxes only.
+The shape decision, settled: **the AdVenture Capitalist panel is the game. The plot is the shell
+around it.** The player walks up to a board on their plot, clicks into it, and the full idle game
+opens as a screen-filling panel. That is the main selling point, and the 3D world exists to give
+it a place to live rather than the other way round.
 
-- A low-poly plot with a spawn, ground and boundary
+This is a better split than putting a production cycle on each of ten buildings: the economy gets
+one authoritative surface instead of ten scattered interaction points, the panel is identical on
+a phone and a desktop, and the plot becomes free to be atmosphere, progression display and
+social space without carrying any mechanics.
+
+- A low-poly plot with a spawn, ground, boundary and one board
 - Avatar walks it on desktop, touch and gamepad
-- One business building (Lemonade Stand) with a working production cycle
-- Tap/click/proximity to collect; a cash counter that ticks
-- Buy-one button, unit count visible, building geometry grows at thresholds
+- Clicking the board opens the AdCap panel; clear enter and exit, no trapped players
+- One business row in the panel (Lemonade Stand) driving a real production cycle
+- Click to collect, buy-one, a cash counter that ticks
 
-**Done when:** it is fun to tap for sixty seconds on a phone and on desktop. If it is not, the
-interaction model changes here and not three phases later.
+**Done when:** opening the board and tapping a business for sixty seconds is satisfying on a
+phone and on desktop. If it is not, the interaction model changes here and not three phases
+later.
 
 ---
 
 ## Phase 3 — All ten businesses, managers, upgrades  **PLAYTEST**
 
-- All ten Earth businesses placed on the plot, scaled so walking between them reads well
+The panel becomes the whole source game.
+
+- All ten Earth businesses as rows, ordered by cost, with progress bars and unit counts
 - x1 / x10 / x100 / max buy modes
 - Managers purchasable; a managed business runs itself
 - Cash upgrades (the ×3 multipliers)
 - Milestone halving with loud feedback — this is the game's best moment and must feel like one
+- Buildings on the plot grow to reflect unit counts, as a *display* of progress with no
+  mechanics attached
 
 **Done when:** a full solo session reaches the Bank with no visuals missing and no number wrong.
 
@@ -61,10 +74,13 @@ interaction model changes here and not three phases later.
 
 ## Phase 4 — UI pass, Steal an Egg style  **PLAYTEST**
 
+The panel is where nearly all the screen time happens, so this phase matters more than it would
+in a game whose appeal was its world.
+
 - Typography, panel shapes, button styling, colour language matched to reference screenshots
-- Business panel per building; HUD; buy-mode selector; number pops on collect
+- Business rows; HUD; buy-mode selector; number pops on collect
 - Portrait and landscape layouts, safe-area aware, tested at phone, tablet and desktop sizes
-- Controller and keyboard navigation
+- Controller and keyboard navigation through the panel
 
 **Done when:** a screenshot of this game and a screenshot of the reference sit together without
 looking like different products.

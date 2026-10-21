@@ -31,6 +31,17 @@ jobs:
       - name: Lint (Selene)
         run: selene src tests
 
+      # Selene, StyLua and luau-lsp know Luau; none of them know this project's
+      # non-negotiables. scripts/guard.py makes those mechanical. See CLAUDE.md.
+      - name: Project guards
+        run: python3 scripts/guard.py
+
+      # CI has no Luau runtime, so tests/ can only be type-checked here. This re-derives every
+      # economy anchor from the config at 50-digit precision instead, which catches a typo'd
+      # constant without needing a DataModel. See tests/README.md.
+      - name: Verify economy constants
+        run: python3 scripts/verify_economy.py
+
       - name: Format check (StyLua)
         run: stylua --check src tests
 

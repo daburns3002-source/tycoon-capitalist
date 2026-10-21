@@ -1,0 +1,511 @@
+--!strict
+--[[
+	The economy suite.
+
+	Every assertion here is a value with a known-correct answer, either read out of the Steam
+	build or derived from the formulas in docs/RESEARCH-advcap.md at 50-digit precision. This
+	is the file that makes "identical to AdVenture Capitalist" a checkable claim.
+
+	Run it from Studio (see tests/README.md). CI type-checks it and separately re-derives the
+	same anchors in scripts/verify_economy.py, which needs no Luau runtime.
+
+	A note on one anchor: the wiki says the second Car Wash costs $829.92. It does not. That is
+	728 x 1.14, and the initial cost is 720, so the answer is $820.80. The wiki's other figures
+	reproduce exactly, which is a decent reminder that a secondary source is worth checking
+	rather than trusting.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Economy = Shared:WaitForChild("Economy")
+
+local Angels = require(Economy.Angels)
+local BigNumber = require(Economy.BigNumber)
+local Businesses = require(Shared.Config.Businesses)
+local Cost = require(Economy.Cost)
+local Cycle = require(Economy.Cycle)
+local Format = require(Economy.Format)
+local Revenue = require(Economy.Revenue)
+local TestRunner = require(ServerStorage.Tests.TestRunner)
+
+local Spec = {}
+
+local function allUnits(count: number): { [string]: number }
+	local map = {}
+	for _, config in Businesses.list do
+		map[config.id] = count
+	end
+	return map
+end
+
+local function testBigNumber(): (number, number)
+	local t = TestRunner.new("BigNumber")
+
+	t:bigEquals("fromNumber normalises 1500", BigNumber.fromNumber(1500), 1.5, 3)
+	t:bigEquals("fromNumber handles 1", BigNumber.fromNumber(1), 1, 0)
+	t:bigEquals("fromParts round-trips", BigNumber.fromParts(2.9668737024, 10), 2.9668737024, 10)
+	t:isTrue("zero is zero", BigNumber.isZero(BigNumber.zero))
+
+	-- Addition across a small gap keeps both terms.
+	t:bigEquals(
+		"1e3 + 5e2",
+		BigNumber.add(BigNumber.fromNumber(1000), BigNumber.fromNumber(500)),
+		1.5,
+		3
+	)
+	-- Across a gap wider than the double's precision the smaller term cannot register, which
+	-- is correct rather than approximate.
+	t:bigEquals(
+		"1e30 + 1e3 drops the small term",
+		BigNumber.add(BigNumber.fromParts(1, 30), BigNumber.fromNumber(1000)),
+		1,
+		30
+	)
+
+	t:bigEquals(
+		"mul adds exponents",
+		BigNumber.mul(BigNumber.fromParts(2, 50), BigNumber.fromParts(3, 60)),
+		6,
+		110
+	)
+	t:bigEquals(
+		"sub to zero",
+		BigNumber.sub(BigNumber.fromNumber(5), BigNumber.fromNumber(5)),
+		0,
+		0
+	)
+
+	-- Past the double's own ceiling, which is the entire reason this type exists.
+	local huge = BigNumber.powNumber(10, 400)
+	t:bigEquals("10^400 survives", huge, 1, 400)
+	t:bigEquals("10^400 squared", BigNumber.mul(huge, huge), 1, 800)
+
+	t:bigEquals("sqrt of 1e100", BigNumber.sqrt(BigNumber.fromParts(1, 100)), 1, 50)
+	-- An odd exponent cannot be halved directly; the mantissa has to absorb a power of ten.
+	t:bigEquals("sqrt of 1e101", BigNumber.sqrt(BigNumber.fromParts(1, 101)), 3.16227766017, 50)
+
+	t:equalsApprox("log10 of 1.5e7", BigNumber.log10(BigNumber.fromParts(1.5, 7)), 7.17609125906)
+	t:equals(
+		"compare 1e10 > 1e9",
+		BigNumber.gt(BigNumber.fromParts(1, 10), BigNumber.fromParts(1, 9)),
+		true
+	)
+	t:equals(
+		"compare equal",
+		BigNumber.eq(BigNumber.fromNumber(42), BigNumber.fromNumber(42)),
+		true
+	)
+
+	local stored = BigNumber.serialise(BigNumber.fromParts(1.07495424, 9))
+	t:bigEquals("serialise round-trip", BigNumber.deserialise(stored), 1.07495424, 9)
+
+	return t:finish()
+end
+
+local function testCost(): (number, number)
+	local t = TestRunner.new("Cost")
+
+	local carWash = Businesses.byId.CarWash
+	local lemonade = Businesses.byId.LemonadeStand
+	local oil = Businesses.byId.OilCompany
+
+	-- The first unit is the initial cost: no coefficient applied.
+	t:equalsApprox("1st Car Wash", BigNumber.toNumber(Cost.unitCost(carWash, 1)), 720, 1e-12)
+	-- 720 * 1.14. NOT the wiki's 829.92.
+	t:equalsApprox("2nd Car Wash", BigNumber.toNumber(Cost.unitCost(carWash, 2)), 820.80, 1e-12)
+	t:equalsApprox("3rd Car Wash", BigNumber.toNumber(Cost.unitCost(carWash, 3)), 935.712, 1e-12)
+
+	-- The player owns one free stand, so the first purchase is unit 2 at exactly $4.
+	t:equalsApprox(
+		"2nd Lemonade Stand is $4",
+		BigNumber.toNumber(Cost.unitCost(lemonade, 2)),
+		4,
+		1e-12
+	)
+
+	-- Ten at once is exactly ten singles: no bulk discount in the source game.
+	local singles = BigNumber.zero
+	for n = 1, 10 do
+		singles = BigNumber.add(singles, Cost.unitCost(carWash, n))
+	end
+	t:equalsApprox(
+		"bulk of 10 equals 10 singles",
+		BigNumber.toNumber(Cost.bulkCost(carWash, 0, 10)),
+		BigNumber.toNumber(singles),
+		1e-9
+	)
+
+	-- The headline series check: 319,433,276,243,943 to the dollar.
+	t:equalsApprox(
+		"first 100 Oil Companies",
+		BigNumber.toNumber(Cost.bulkCost(oil, 0, 100)),
+		319433276243943,
+		1e-12
+	)
+
+	t:equals("bulk of 0 is zero", BigNumber.isZero(Cost.bulkCost(carWash, 5, 0)), true)
+
+	-- maxAffordable has to invert the series exactly, including at the boundary.
+	local exactlyTen = Cost.bulkCost(carWash, 0, 10)
+	t:equals(
+		"maxAffordable with exactly 10 units of money",
+		Cost.maxAffordable(carWash, 0, exactlyTen, Businesses.maxUnits),
+		10
+	)
+	local oneShort = BigNumber.sub(exactlyTen, BigNumber.fromNumber(1))
+	t:equals(
+		"maxAffordable one dollar short buys 9",
+		Cost.maxAffordable(carWash, 0, oneShort, Businesses.maxUnits),
+		9
+	)
+	t:equals(
+		"maxAffordable with no money",
+		Cost.maxAffordable(carWash, 0, BigNumber.zero, Businesses.maxUnits),
+		0
+	)
+	t:equals(
+		"maxAffordable respects the unit cap",
+		Cost.maxAffordable(carWash, 0, BigNumber.powNumber(10, 300), 50),
+		50
+	)
+
+	-- The property that matters: given exactly the price of k units, max-buy must return k, for
+	-- every business and at every scale. Codex caught this failing at exact boundaries -- the
+	-- log can land a hair under the integer, and a decrement-only correction has no way back up,
+	-- so the player is refused a unit they can exactly afford.
+	--
+	-- Swept rather than spot-checked, because the failure depends on where the floating-point
+	-- logarithm happens to land and a single case proves nothing about the next coefficient.
+	local boundaryFailures = 0
+	local firstFailure: string? = nil
+	for _, config in Businesses.list do
+		for _, owned in { 0, 1, 24, 25, 99, 400 } do
+			for _, quantity in { 1, 2, 9, 10, 25, 100 } do
+				local exact = Cost.bulkCost(config, owned, quantity)
+				local answer = Cost.maxAffordable(config, owned, exact, Businesses.maxUnits)
+				if answer ~= quantity then
+					boundaryFailures += 1
+					if firstFailure == nil then
+						firstFailure = string.format(
+							"%s owned=%d wanted=%d got=%d",
+							config.id,
+							owned,
+							quantity,
+							answer
+						)
+					end
+				end
+			end
+		end
+	end
+	t:record(
+		"maxAffordable is exact at every batch boundary (360 cases)",
+		boundaryFailures == 0,
+		if firstFailure
+			then string.format("%d failures, first: %s", boundaryFailures, firstFailure)
+			else nil
+	)
+
+	-- One short of a boundary must still round down, so the upward correction cannot overshoot.
+	local justUnder = BigNumber.sub(Cost.bulkCost(carWash, 7, 10), BigNumber.fromNumber(0.01))
+	t:equals(
+		"a penny short of ten still buys nine",
+		Cost.maxAffordable(carWash, 7, justUnder, Businesses.maxUnits),
+		9
+	)
+
+	-- The accountant's 10% discount.
+	t:equalsApprox(
+		"10% accountant discount",
+		BigNumber.toNumber(Cost.applyDiscount(Cost.unitCost(carWash, 2), 0.9)),
+		738.72,
+		1e-12
+	)
+
+	return t:finish()
+end
+
+local function testCycle(): (number, number)
+	local t = TestRunner.new("Cycle")
+
+	local oil = Businesses.byId.OilCompany
+	local lemonade = Businesses.byId.LemonadeStand
+
+	t:equals("0 units, no milestones", Cycle.milestonesReached(0), 0)
+	t:equals("24 units, no milestones", Cycle.milestonesReached(24), 0)
+	t:equals("25 units, one milestone", Cycle.milestonesReached(25), 1)
+	t:equals("400 units, all six", Cycle.milestonesReached(400), 6)
+	t:equals("1000 units, still six", Cycle.milestonesReached(1000), 6)
+
+	-- No milestones: the base cycle.
+	t:equalsApprox("Oil at 1 unit", Cycle.duration(oil, 1, 0), 36864, 1e-12)
+	-- Its own 25 mark halves it once.
+	t:equalsApprox("Oil at 25 units", Cycle.duration(oil, 25, 0), 18432, 1e-12)
+
+	-- The all-business tier stacks on top of the per-business one. This is the half of the
+	-- system that is easy to miss and that carries the mid-game.
+	local at25 = allUnits(25)
+	t:equals("all businesses at 25", Cycle.globalMilestonesReached(at25), 1)
+	t:equalsApprox("Oil at 25 with all at 25", Cycle.duration(oil, 25, 1), 9216, 1e-12)
+
+	-- One business short holds the whole global tier back.
+	local almost = allUnits(25)
+	almost.Bank = 24
+	t:equals("one business short blocks the global tier", Cycle.globalMilestonesReached(almost), 0)
+
+	-- The headline: 400 of everything is six own plus six global, capped at twelve, and the
+	-- Oil Company's ten-hour cycle becomes exactly nine seconds.
+	local at400 = allUnits(400)
+	t:equals("all businesses at 400", Cycle.globalMilestonesReached(at400), 6)
+	t:equals("halvings cap at 12", Cycle.halvings(400, 6), 12)
+	t:equalsApprox("Oil cycle at 400 of everything", Cycle.duration(oil, 400, 6), 9, 1e-12)
+	t:equalsApprox(
+		"Lemonade cycle at 400 of everything",
+		Cycle.duration(lemonade, 400, 6),
+		0.6 / 4096,
+		1e-12
+	)
+
+	t:equals("next milestone from 0", Cycle.nextMilestone(0), 25)
+	t:equals("next milestone from 25", Cycle.nextMilestone(25), 50)
+	t:equals("no milestone past 400", Cycle.nextMilestone(400), nil)
+
+	local target, laggard = Cycle.nextGlobalMilestone(almost)
+	t:equals("next global milestone target", target, 25)
+	t:equals("next global milestone laggard", laggard, "Bank")
+
+	return t:finish()
+end
+
+local function testRevenue(): (number, number)
+	local t = TestRunner.new("Revenue")
+
+	local bank = Businesses.byId.Bank
+
+	-- Linear in units: the 145th Bank adds what the first did.
+	local one = Revenue.perCycle(bank, 1, 1, 1, 0)
+	local oneForty5 = Revenue.perCycle(bank, 145, 1, 1, 0)
+	t:equalsApprox("1 Bank per cycle", BigNumber.toNumber(one), 1074954240, 1e-12)
+	t:equalsApprox(
+		"145 Banks is exactly 145x",
+		BigNumber.toNumber(oneForty5),
+		1074954240 * 145,
+		1e-12
+	)
+
+	-- Angels are additive among themselves. Fifty is x2, not 1.02^50.
+	t:equalsApprox("50 angels is x2", Revenue.angelMultiplier(50), 2, 1e-12)
+	t:equalsApprox("1000 angels is x21", Revenue.angelMultiplier(1000), 21, 1e-12)
+	t:equalsApprox("0 angels is x1", Revenue.angelMultiplier(0), 1, 1e-12)
+
+	-- Upgrade stacks are multiplicative against each other and against the angel bonus.
+	local boosted = Revenue.perCycle(bank, 1, 3, 2, 50)
+	t:equalsApprox(
+		"x3 business, x2 all, 50 angels",
+		BigNumber.toNumber(boosted),
+		1074954240 * 3 * 2 * 2,
+		1e-12
+	)
+
+	t:equals("zero units earns nothing", BigNumber.isZero(Revenue.perCycle(bank, 0, 1, 1, 0)), true)
+
+	t:equalsApprox(
+		"per second at base cycle",
+		BigNumber.toNumber(Revenue.perSecond(one, bank.cycleSeconds)),
+		1074954240 / 6144,
+		1e-12
+	)
+
+	-- Only whole cycles pay out, and the remainder carries forward.
+	local payout, remainder = Revenue.overElapsed(BigNumber.fromNumber(100), 10, 35)
+	t:equalsApprox("3 whole cycles in 35s", BigNumber.toNumber(payout), 300, 1e-12)
+	t:equalsApprox("5s carries over", remainder, 5, 1e-12)
+
+	local nothing, held = Revenue.overElapsed(BigNumber.fromNumber(100), 10, 7)
+	t:equals("a partial cycle pays nothing", BigNumber.isZero(nothing), true)
+	t:equalsApprox("the partial cycle is held", held, 7, 1e-12)
+
+	return t:finish()
+end
+
+local function testAngels(): (number, number)
+	local t = TestRunner.new("Angels")
+
+	local zero = BigNumber.zero
+
+	-- The first angel lands just past $44.44 billion lifetime.
+	t:equals(
+		"no angel below the threshold",
+		Angels.gainOnReset(BigNumber.fromNumber(44e9), zero, 0),
+		0
+	)
+	t:equals(
+		"first angel at 44,444,444,445",
+		Angels.gainOnReset(BigNumber.fromNumber(44444444445), zero, 0),
+		1
+	)
+
+	-- The reference points from the source game, all exact.
+	t:equals("1e12 lifetime", Angels.gainOnReset(BigNumber.fromParts(1, 12), zero, 0), 4)
+	t:equals("1e15 lifetime", Angels.gainOnReset(BigNumber.fromParts(1, 15), zero, 0), 150)
+	t:equals("1e18 lifetime", Angels.gainOnReset(BigNumber.fromParts(1, 18), zero, 0), 4743)
+	t:equals("1e21 lifetime", Angels.gainOnReset(BigNumber.fromParts(1, 21), zero, 0), 150000)
+	t:equals("1e24 lifetime", Angels.gainOnReset(BigNumber.fromParts(1, 24), zero, 0), 4743416)
+
+	-- A second run only pays for what it added, not for the whole lifetime again.
+	t:equals(
+		"second run pays the difference",
+		Angels.gainOnReset(BigNumber.fromParts(1, 18), BigNumber.fromParts(1, 15), 0),
+		4743 - 150
+	)
+
+	-- Spending angels does not make the next one cheaper: the requirement tracks lifetime
+	-- earnings, so a sacrifice beyond the previous run's credit comes off the payout.
+	t:equals(
+		"sacrificed angels come off the payout",
+		Angels.gainOnReset(BigNumber.fromParts(1, 18), BigNumber.fromParts(1, 15), 1000),
+		4743 - 1000
+	)
+	t:equals(
+		"a small sacrifice is absorbed by prior credit",
+		Angels.gainOnReset(BigNumber.fromParts(1, 18), BigNumber.fromParts(1, 15), 100),
+		4743 - 150
+	)
+	t:equals(
+		"the payout never goes negative",
+		Angels.gainOnReset(BigNumber.fromParts(1, 15), zero, 999999),
+		0
+	)
+
+	-- Inverting the formula for the "next angel at $X" readout.
+	local nextAt = Angels.earningsForNextAngel(0)
+	t:equalsApprox("next angel from 0", BigNumber.toNumber(nextAt), 400e9 / 9, 1e-9)
+	t:equalsApprox(
+		"next angel from 149",
+		BigNumber.toNumber(Angels.earningsForNextAngel(149)),
+		150 * 150 * (400e9 / 9),
+		1e-9
+	)
+
+	-- Mars divides by 100e9 instead of 400e9, so the same earnings yield twice the angels.
+	t:equals(
+		"Mars divisor doubles the yield",
+		Angels.gainOnReset(BigNumber.fromParts(1, 15), zero, 0, Angels.marsDivisor),
+		300
+	)
+
+	return t:finish()
+end
+
+local function testFormat(): (number, number)
+	local t = TestRunner.new("Format")
+
+	t:equals("zero", Format.short(BigNumber.zero), "0")
+	t:equals("under a thousand prints whole", Format.short(BigNumber.fromNumber(847)), "847")
+	t:equals("trailing zeros trimmed", Format.short(BigNumber.fromNumber(1000)), "1K")
+	t:equals("one decimal kept", Format.short(BigNumber.fromNumber(1500)), "1.5K")
+	t:equals("two decimals kept", Format.short(BigNumber.fromNumber(1234)), "1.23K")
+	t:equals("millions", Format.short(BigNumber.fromNumber(45600000)), "45.6M")
+	t:equals("billions", Format.short(BigNumber.fromParts(7.89, 9)), "7.89B")
+	t:equals("trillions", Format.short(BigNumber.fromParts(1, 12)), "1T")
+
+	-- Mid-group exponents have to redistribute into the digits, not the suffix.
+	t:equals("1e7 is 10M", Format.short(BigNumber.fromParts(1, 7)), "10M")
+	t:equals("1e8 is 100M", Format.short(BigNumber.fromParts(1, 8)), "100M")
+
+	t:equals(
+		"named magnitudes run out into letters",
+		Format.short(BigNumber.fromParts(1, 66)),
+		"1aa"
+	)
+	t:equals("vigintillion is still named", Format.short(BigNumber.fromParts(1, 63)), "1Vg")
+
+	t:equals("long form millions", Format.long(BigNumber.fromNumber(1230000)), "1.23 million")
+	t:equals("long form quadrillion", Format.long(BigNumber.fromParts(1, 15)), "1 quadrillion")
+	t:equals("long form defers past vigintillion", Format.long(BigNumber.fromParts(1, 66)), "1aa")
+
+	t:equals("money prefixes a dollar sign", Format.money(BigNumber.fromNumber(1500)), "$1.5K")
+
+	t:equals("sub-second cycle", Format.duration(0.6), "0.6s")
+	t:equals("seconds", Format.duration(24), "24s")
+	t:equals("minutes and seconds", Format.duration(96), "1:36")
+	t:equals("hours", Format.duration(36864), "10:14:24")
+
+	t:equals("integer grouping", Format.integer(1074954240), "1,074,954,240")
+	t:equals("small integer ungrouped", Format.integer(25), "25")
+
+	return t:finish()
+end
+
+local function testConfigIntegrity(): (number, number)
+	local t = TestRunner.new("Config")
+
+	t:equals("ten Earth businesses", #Businesses.list, 10)
+	t:equals("six cycle milestones", #Businesses.cycleMilestones, 6)
+	t:equals("twelve halvings maximum", Businesses.maxCycleHalvings, 12)
+
+	-- Ordered cheapest to most expensive, and every coefficient in the source game's range.
+	local previousCost = BigNumber.zero
+	local ordered = true
+	local coefficientsSane = true
+	for index, config in Businesses.list do
+		if BigNumber.lte(config.initialCost, previousCost) then
+			ordered = false
+		end
+		previousCost = config.initialCost
+
+		if config.coefficient < 1.07 or config.coefficient > 1.15 then
+			coefficientsSane = false
+		end
+		if config.order ~= index then
+			ordered = false
+		end
+	end
+	t:isTrue("businesses ordered by ascending cost", ordered)
+	t:isTrue("coefficients within 1.07..1.15", coefficientsSane)
+
+	-- Frozen: a config module that can be mutated at runtime is not a config module.
+	local froze = true
+	local ok = pcall(function()
+		(Businesses.byId :: any).CarWash = nil
+	end)
+	if ok then
+		froze = false
+	end
+	t:isTrue("config table is frozen", froze)
+
+	return t:finish()
+end
+
+function Spec.run(): boolean
+	print("[economy] running suite")
+
+	local suites = {
+		testBigNumber,
+		testCost,
+		testCycle,
+		testRevenue,
+		testAngels,
+		testFormat,
+		testConfigIntegrity,
+	}
+
+	local passed, failed = 0, 0
+	for _, suite in suites do
+		local suitePassed, suiteFailed = suite()
+		passed += suitePassed
+		failed += suiteFailed
+	end
+
+	if failed == 0 then
+		print(string.format("[economy] %d assertions, all passed", passed))
+	else
+		warn(string.format("[economy] %d of %d assertions FAILED", failed, passed + failed))
+	end
+
+	return failed == 0
+end
+
+return Spec
