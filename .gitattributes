@@ -1,0 +1,19 @@
+# StyLua enforces Unix line endings, and CI checks on Linux.
+# Keep source LF in the working copy so local and CI format checks agree.
+*.luau   text eol=lf
+*.lua    text eol=lf
+*.toml   text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.md     text eol=lf
+
+# Binary
+*.rbxl   binary
+*.rbxm   binary
+*.blend  binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.fbx    binary
+*.gltf   binary
+*.glb    binary

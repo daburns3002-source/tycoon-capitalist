@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, format and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rokit toolchain
+        uses: CompeyDev/setup-rokit@v0.1.2
+        with:
+          cache: true
+
+      - name: Install Wally packages
+        run: wally install
+
+      - name: Generate Selene Roblox std
+        run: selene generate-roblox-std
+
+      - name: Lint (Selene)
+        run: selene src tests
+
+      - name: Format check (StyLua)
+        run: stylua --check src tests
+
+      - name: Build (Rojo)
+        run: rojo build -o build.rbxl
+
+      # Catches strict-mode type errors that `rojo build` cannot see. Without
+      # this the only type check is opening Studio, which CI cannot do.
+      - name: Generate sourcemap
+        run: rojo sourcemap default.project.json -o sourcemap.json
+
+      - name: Fetch Roblox type definitions
+        run: >
+          curl -sfL -o globalTypes.d.luau
+          https://raw.githubusercontent.com/JohnnyMorganz/luau-lsp/main/scripts/globalTypes.d.luau
+
+      - name: Type check (luau-lsp)
+        run: luau-lsp analyze --sourcemap=sourcemap.json --defs=globalTypes.d.luau src tests
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tycoon-capitalist-place
+          path: build.rbxl
+          retention-days: 7

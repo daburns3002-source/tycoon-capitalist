@@ -1,0 +1,7 @@
+std = "roblox"
+
+[rules]
+# Roblox code legitimately shadows `self` and loop vars in nested callbacks.
+shadowing = "warn"
+# We use `_` prefixed unused args to document signatures.
+unused_variable = "warn"
