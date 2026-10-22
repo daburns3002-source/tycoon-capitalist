@@ -44,6 +44,24 @@ return table.freeze({
 	}),
 
 	--[[
+		The ranking board: a second board, off to one side of the business one.
+
+		Deliberately a thing in the world rather than another tab. The panel is the game, but a
+		leaderboard is the one piece of this that is *about other people*, and walking up to a
+		board with names on it is worth more than a fifth tab nobody opens.
+	]]
+	ranking = table.freeze({
+		offset = Vector3.new(26, 0, -8),
+		size = Vector3.new(12, 11, 1),
+		legSize = Vector3.new(1.2, 5, 1.2),
+		tilt = -12,
+		height = 8,
+		faceColour = Color3.fromRGB(28, 34, 56),
+		frameColour = Color3.fromRGB(120, 180, 255),
+		rows = 8,
+	}),
+
+	--[[
 		Buildings are placed in a row behind the board. In Phase 2 only the Lemonade Stand
 		exists; the rest of the row fills in during Phase 3. These are display only -- no
 		mechanics hang off them, the panel owns the economy.

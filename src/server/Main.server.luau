@@ -14,6 +14,8 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Remotes = require(Shared.Net.Remotes)
 
 local Handlers = require(script.Parent.Net.Handlers)
+local Leaderboard = require(script.Parent.Data.Leaderboard)
+local PlotBuilder = require(script.Parent.World.PlotBuilder)
 local PlotService = require(script.Parent.Plot.PlotService)
 local Production = require(script.Parent.Tick.Production)
 local Profiles = require(script.Parent.Data.Profiles)
@@ -46,6 +48,14 @@ local IDLE_SNAPSHOT_INTERVAL = 1
 	server population.
 ]]
 local AUTOSAVE_INTERVAL = 60
+
+--[[
+	How often the ranking boards are refreshed.
+
+	A sorted read is expensive and the standings barely move, so this is deliberately slow. Two
+	minutes is often enough that a player who overtakes someone sees it within a session.
+]]
+local RANKING_INTERVAL = 120
 
 local function onPlayerAdded(player: Player): ()
 	-- Yields: reads the profile, takes the lock, settles the absence.
@@ -107,6 +117,30 @@ local function main(): ()
 			for userId, entry in PlotService.all() do
 				PlotService.save(userId, entry, false)
 			end
+		end
+	end)
+
+	--[[
+		Ranking boards.
+
+		Fetched once for the whole server and written to every plot's board, rather than fetched
+		per player -- the standings are global, so one read serves everybody.
+	]]
+	task.spawn(function()
+		local Format = require(Shared.Economy.Format)
+		while true do
+			local top = Leaderboard.top(8)
+
+			local lines: { string } = {}
+			for index, row in top do
+				table.insert(lines, `{index}.  {row.displayName}  --  {Format.money(row.earnings)}`)
+			end
+
+			for _, entry in PlotService.all() do
+				PlotBuilder.setRanking(entry.world, lines)
+			end
+
+			task.wait(RANKING_INTERVAL)
 		end
 	end)
 

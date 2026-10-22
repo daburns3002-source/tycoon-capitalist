@@ -14,6 +14,7 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
+local Leaderboard = require(script.Parent.Parent.Data.Leaderboard)
 local Offline = require(script.Parent.Parent.Tick.Offline)
 local PlotBuilder = require(script.Parent.Parent.World.PlotBuilder)
 local PlotState = require(script.Parent.PlotState)
@@ -151,6 +152,12 @@ function PlotService.save(userId: number, entry: Entry, releaseLock: boolean): b
 	if not entry.canSave then
 		return false
 	end
+
+	-- The ranking rides along with the save rather than updating on every payout: it only has
+	-- to be roughly current, and an OrderedDataStore write per cycle would exhaust the request
+	-- budget in seconds.
+	Leaderboard.publish(userId, entry.state.lifetimeEarnings)
+
 	return Profiles.save(userId, Serialise.save(entry.state), releaseLock)
 end
 

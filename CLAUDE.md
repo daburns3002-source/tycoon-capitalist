@@ -37,11 +37,17 @@ published, and only lightly playtested.
   Egg look. Per-device layouts and sound are still ahead.
 - **Phase 6 — Angel Investors.** Reset flow with a two-tap confirm.
 
-The economy suite runs in Studio at **128 assertions**.
+The economy suite runs in Studio at **202 assertions**.
 
-Next, in the order that matters most: **Phase 5 persistence and offline earnings** (the single
-biggest retention mechanic in the genre, and `Production.advance` already settles an arbitrary
-elapsed interval in one step), then angel upgrades to give angels a sink, then a leaderboard.
+- **Phase 5 — persistence.** Session-locked DataStore profiles, versioned schema, offline
+  earnings from the server clock, autosave and a shutdown write. The storage layer's *lock* is
+  tested against an in-memory fake; the DataStore itself has never run, because the place is
+  unpublished. See `docs/SETUP.md`.
+- **Phase 8 — social, started.** Angel upgrades give angels a sink, and a global leaderboard
+  ranks lifetime earnings on a board in the world.
+
+Next: the Phase 4 polish that is still outstanding (per-device layouts, sound), and publishing,
+without which persistence and the leaderboard cannot be verified at all.
 
 ## Commands
 

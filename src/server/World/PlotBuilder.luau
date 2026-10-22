@@ -24,6 +24,7 @@ export type Plot = {
 	origin: Vector3,
 	spawnPosition: Vector3,
 	board: BasePart,
+	rankingRows: { TextLabel },
 	buildings: { [Types.BusinessId]: BasePart },
 }
 
@@ -107,6 +108,84 @@ local function buildBoard(model: Model, origin: Vector3): BasePart
 end
 
 --[[
+	The ranking board: a surface in the world showing who is ahead.
+
+	Built from parts and a SurfaceGui rather than a screen panel, because the point of it is
+	that it is *somewhere* -- you walk up to it, and so does everyone else. Returns the row
+	labels so the server can fill them in without hunting through the hierarchy.
+]]
+local function buildRankingBoard(model: Model, origin: Vector3): { TextLabel }
+	local config = World.ranking
+	local centre = origin + config.offset + Vector3.new(0, config.height, 0)
+
+	local face = part("RankingFace", config.size, config.faceColour, model)
+	face.CFrame = CFrame.new(centre) * CFrame.Angles(math.rad(config.tilt), 0, 0)
+
+	local frame =
+		part("RankingFrame", config.size + Vector3.new(0.7, 0.7, -0.4), config.frameColour, model)
+	frame.CFrame = face.CFrame
+	frame.CanCollide = false
+
+	for index, side in { -1, 1 } do
+		local leg = part(`RankingLeg{index}`, config.legSize, config.frameColour, model)
+		leg.Position = Vector3.new(
+			centre.X + side * (config.size.X / 2 - 1.2),
+			origin.Y + config.legSize.Y / 2,
+			centre.Z
+		)
+	end
+
+	local surface = Instance.new("SurfaceGui")
+	surface.Name = "Ranking"
+	surface.Face = Enum.NormalId.Front
+	surface.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	surface.PixelsPerStud = 48
+	surface.LightInfluence = 0
+	surface.Parent = face
+
+	local padding = Instance.new("UIPadding")
+	padding.PaddingTop = UDim.new(0, 18)
+	padding.PaddingLeft = UDim.new(0, 18)
+	padding.PaddingRight = UDim.new(0, 18)
+	padding.Parent = surface
+
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 6)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = surface
+
+	local heading = Instance.new("TextLabel")
+	heading.Name = "Heading"
+	heading.BackgroundTransparency = 1
+	heading.Size = UDim2.new(1, 0, 0, 56)
+	heading.Font = Enum.Font.FredokaOne
+	heading.TextSize = 44
+	heading.TextColor3 = Color3.fromRGB(255, 196, 54)
+	heading.Text = "TOP EARNERS"
+	heading.LayoutOrder = 0
+	heading.Parent = surface
+
+	local rows: { TextLabel } = {}
+	for index = 1, config.rows do
+		local row = Instance.new("TextLabel")
+		row.Name = `Row{index}`
+		row.BackgroundTransparency = 1
+		row.Size = UDim2.new(1, 0, 0, 34)
+		row.Font = Enum.Font.GothamMedium
+		row.TextSize = 26
+		row.TextXAlignment = Enum.TextXAlignment.Left
+		row.TextColor3 = Color3.fromRGB(226, 234, 255)
+		row.Text = ""
+		row.LayoutOrder = index
+		row.Parent = surface
+		table.insert(rows, row)
+	end
+
+	rows[1].Text = "no rankings yet"
+	return rows
+end
+
+--[[
 	The building row behind the board.
 
 	Display only. No prompt, no click detector, no mechanics -- the panel owns the economy and
@@ -161,6 +240,7 @@ function PlotBuilder.build(index: number, unlocked: { Types.BusinessId }, parent
 
 	buildBorder(model, origin)
 	local board = buildBoard(model, origin)
+	local rankingRows = buildRankingBoard(model, origin)
 	local buildings = buildBuildings(model, origin, unlocked)
 
 	model.Parent = parent
@@ -170,6 +250,7 @@ function PlotBuilder.build(index: number, unlocked: { Types.BusinessId }, parent
 		origin = origin,
 		spawnPosition = origin + World.spawn.offset,
 		board = board,
+		rankingRows = rankingRows,
 		buildings = buildings,
 	}
 end
@@ -217,6 +298,22 @@ function PlotBuilder.updateBuilding(plot: Plot, id: Types.BusinessId, unitsOwned
 
 	box.Size = size
 	box.Position = Vector3.new(box.Position.X, base + size.Y / 2, box.Position.Z)
+end
+
+--[[
+	Fill the ranking board in.
+
+	Takes already-formatted lines so this module stays about geometry and knows nothing about
+	money, names or ordering.
+]]
+function PlotBuilder.setRanking(plot: Plot, lines: { string }): ()
+	for index, row in plot.rankingRows do
+		row.Text = lines[index] or ""
+	end
+
+	if #lines == 0 and plot.rankingRows[1] then
+		plot.rankingRows[1].Text = "no rankings yet"
+	end
 end
 
 return table.freeze(PlotBuilder)

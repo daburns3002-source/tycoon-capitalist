@@ -31,6 +31,7 @@ local Revenue = require(Economy.Revenue)
 local ServerScriptService = game:GetService("ServerScriptService")
 local AngelUpgradeConfig = require(Shared.Config.AngelUpgrades)
 local FakeStore = require(ServerStorage.Tests.FakeStore)
+local Leaderboard = require(ServerScriptService.Server.Data.Leaderboard)
 local Offline = require(ServerScriptService.Server.Tick.Offline)
 local PlotState = require(ServerScriptService.Server.Plot.PlotState)
 local Profiles = require(ServerScriptService.Server.Data.Profiles)
@@ -882,6 +883,81 @@ local function testAngelUpgrades(): (number, number)
 	return t:finish()
 end
 
+local function testLeaderboard(): (number, number)
+	local t = TestRunner.new("Leaderboard")
+
+	--[[
+		The whole trick is ranking by the logarithm. An OrderedDataStore sorts a plain integer
+		and this game's earnings reach 1e306, so the stored key is log10 scaled up. log10 is
+		strictly increasing, so the ranking is exactly the ranking by earnings -- the test that
+		matters is that ordering is preserved across the entire range.
+	]]
+	local samples = {
+		BigNumber.zero,
+		BigNumber.fromNumber(1),
+		BigNumber.fromNumber(4),
+		BigNumber.fromNumber(1000),
+		BigNumber.fromParts(4.4, 10),
+		BigNumber.fromParts(1, 15),
+		BigNumber.fromParts(9.99, 15),
+		BigNumber.fromParts(1, 100),
+		BigNumber.fromParts(1, 306),
+	}
+
+	local brokenAt = nil
+	for index = 2, #samples do
+		local lower = Leaderboard.encode(samples[index - 1])
+		local higher = Leaderboard.encode(samples[index])
+		if higher <= lower and brokenAt == nil then
+			brokenAt = `sample {index}: {lower} then {higher}`
+		end
+	end
+	t:record("encoding preserves order across 1 to 1e306", brokenAt == nil, brokenAt)
+
+	t:equals("zero scores zero", Leaderboard.encode(BigNumber.zero), 0)
+	t:isTrue("one dollar outranks nothing", Leaderboard.encode(BigNumber.fromNumber(1)) > 0)
+	t:isTrue("1e306 fits in an integer", Leaderboard.encode(BigNumber.fromParts(1, 306)) < 2 ^ 53)
+
+	-- A negative balance cannot happen, but it must not poison the store if it ever did.
+	t:equals(
+		"a negative value scores zero",
+		Leaderboard.encode(BigNumber.negate(BigNumber.fromNumber(500))),
+		0
+	)
+
+	-- Decoding is exact enough to display: within the stored resolution.
+	local original = BigNumber.fromParts(3.7, 42)
+	local roundTrip = Leaderboard.decode(Leaderboard.encode(original))
+	t:equals("decode keeps the exponent", roundTrip.exponent, 42)
+	t:equalsApprox("and the mantissa", roundTrip.mantissa, 3.7, 1e-5)
+
+	-- Two players a factor of two apart must never tie.
+	local a = Leaderboard.encode(BigNumber.fromParts(1, 20))
+	local b = Leaderboard.encode(BigNumber.fromParts(2, 20))
+	t:isTrue("a factor of two is clearly separated", b > a)
+
+	-- Publishing against a fake ordered store.
+	local written: { [string]: number } = {}
+	Leaderboard.configure({
+		SetAsync = function(_self: any, key: string, value: number)
+			written[key] = value
+		end,
+		GetSortedAsync = function()
+			return nil
+		end,
+	})
+
+	t:equals("publish succeeds", Leaderboard.publish(99, BigNumber.fromParts(5, 25)), true)
+	t:equals(
+		"and writes the encoded score",
+		written.player_99,
+		Leaderboard.encode(BigNumber.fromParts(5, 25))
+	)
+
+	Leaderboard.configure(nil)
+	return t:finish()
+end
+
 function Spec.run(): boolean
 	print("[economy] running suite")
 
@@ -899,6 +975,7 @@ function Spec.run(): boolean
 		testOfflineEarnings,
 		testSessionLock,
 		testAngelUpgrades,
+		testLeaderboard,
 	}
 
 	local passed, failed = 0, 0
