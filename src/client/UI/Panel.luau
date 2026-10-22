@@ -26,6 +26,7 @@ local Businesses = require(Shared.Config.Businesses)
 local Format = require(Shared.Economy.Format)
 local Remotes = require(Shared.Net.Remotes)
 local Types = require(Shared.Types)
+local Upgrades = require(Shared.Config.Upgrades)
 
 local Bubbly = require(script.Parent.Bubbly)
 local Device = require(script.Parent.Parent.Device)
@@ -88,6 +89,10 @@ export type Panel = typeof(setmetatable(
 		lifetimeLabel: TextLabel,
 		angelLabel: TextLabel,
 		rowHolder: ScrollingFrame,
+		upgradeHolder: ScrollingFrame,
+		upgradeRows: { [string]: { button: TextButton, price: TextLabel, container: Frame } },
+		tabButtons: { [string]: TextButton },
+		activeTab: string,
 		overlay: Frame,
 		modeButtons: { [Types.BuyMode]: TextButton },
 		rows: { [Types.BusinessId]: Row },
@@ -170,13 +175,119 @@ local function buildHeader(self: Panel, parent: Frame): ()
 	)
 end
 
+--[[
+	The tab bar: businesses, or upgrades.
+
+	The source game puts upgrades behind a side-menu button that opens a separate modal. One
+	panel with two tabs keeps the promise that the board is the single surface for the economy,
+	and on a phone a second full-screen modal on top of a full-screen modal is a bad place to be.
+]]
+local function buildTabs(self: Panel, parent: Frame): ()
+	local bar = Instance.new("Frame")
+	bar.Name = "Tabs"
+	bar.BackgroundTransparency = 1
+	bar.Size = UDim2.new(1, 0, 0, 44)
+	bar.LayoutOrder = 2
+	bar.Parent = parent
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.Padding = UDim.new(0, Theme.metric.rowGap)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = bar
+
+	local names = { businesses = "BUSINESSES", upgrades = "UPGRADES" }
+	local order = { "businesses", "upgrades" }
+
+	for index, key in order do
+		local button = Bubbly.button(key, bar, {
+			fill = Theme.colour.panelDeep,
+			outline = Theme.colour.text,
+			text = names[key],
+			textSize = 18,
+		})
+		button.Size = UDim2.new(0.5, -Theme.metric.rowGap / 2, 1, 0)
+		button.LayoutOrder = index
+		self.tabButtons[key] = button
+
+		table.insert(
+			self.connections,
+			button.Activated:Connect(function()
+				self:setTab(key)
+			end)
+		)
+	end
+end
+
+--[[
+	One upgrade row: what it does, what it costs, and a button.
+
+	The description is generated from the config rather than written out per upgrade, because
+	every one of the 478 in the source game says the same thing -- "<business> Profit x3" -- and
+	a hand-written string per row would be 478 chances to get one wrong.
+]]
+local function buildUpgradeRow(self: Panel, config: Types.UpgradeConfig): ()
+	local container = Bubbly.panel(config.id, self.upgradeHolder, Theme.colour.row)
+	container.Size = UDim2.new(1, -8, 0, 76)
+	container.LayoutOrder = #self.upgradeHolder:GetChildren()
+
+	local title = Bubbly.label("Title", container, {
+		text = config.displayName,
+		size = 20,
+	})
+	title.Size = UDim2.new(1, -180, 0, 24)
+	title.Position = UDim2.fromOffset(16, 10)
+
+	local effect = if config.kind == "angelEffectiveness"
+		then `Angel effectiveness +{math.floor(config.multiplier * 100)}%`
+		elseif config.target == "all" then `All businesses profit x{config.multiplier}`
+		else `{Businesses.byId[config.target].displayName} profit x{config.multiplier}`
+
+	local description = Bubbly.label("Effect", container, {
+		text = effect,
+		size = 15,
+		colour = Theme.colour.textDim,
+		strokeThickness = Theme.metric.textStrokeSmall,
+	})
+	description.Size = UDim2.new(1, -180, 0, 20)
+	description.Position = UDim2.fromOffset(16, 38)
+
+	local button, label = Bubbly.button("Buy", container, {
+		fill = Theme.colour.green,
+		outline = Theme.colour.text,
+		corner = Theme.metric.chipCorner,
+		textSize = 15,
+	})
+	button.Size = UDim2.fromOffset(150, 52)
+	button.Position = UDim2.new(1, -162, 0, 12)
+	label.Size = UDim2.new(1, 0, 0, 20)
+	label.Position = UDim2.fromOffset(0, 6)
+
+	local price = Bubbly.label("Price", button, {
+		size = 17,
+		alignment = Enum.TextXAlignment.Center,
+		gradient = Theme.gradient.money,
+	})
+	price.Size = UDim2.new(1, 0, 0, 24)
+	price.Position = UDim2.fromOffset(0, 26)
+
+	self.upgradeRows[config.id] = { button = button, price = price, container = container }
+
+	table.insert(
+		self.connections,
+		button.Activated:Connect(function()
+			Remotes.get(Remotes.toServer.BuyUpgrade):FireServer(config.id)
+		end)
+	)
+end
+
 --[[ The x1 / x10 / x100 / MAX selector. ]]
 local function buildModeBar(self: Panel, parent: Frame): ()
 	local bar = Instance.new("Frame")
 	bar.Name = "BuyModes"
 	bar.BackgroundTransparency = 1
 	bar.Size = UDim2.new(1, 0, 0, 52)
-	bar.LayoutOrder = 2
+	bar.LayoutOrder = 3
 	bar.Parent = parent
 
 	local layout = Instance.new("UIListLayout")
@@ -469,6 +580,10 @@ function Panel.new(): Panel
 		lifetimeLabel = nil :: any,
 		angelLabel = nil :: any,
 		rowHolder = nil :: any,
+		upgradeHolder = nil :: any,
+		upgradeRows = {},
+		tabButtons = {},
+		activeTab = "businesses",
 		overlay = nil :: any,
 		modeButtons = {},
 		rows = {},
@@ -481,18 +596,19 @@ function Panel.new(): Panel
 	}, Panel)
 
 	buildHeader(self, surface)
+	buildTabs(self, surface)
 	buildModeBar(self, surface)
 
 	local holder = Instance.new("ScrollingFrame")
 	holder.Name = "Businesses"
 	holder.BackgroundTransparency = 1
 	holder.BorderSizePixel = 0
-	holder.Size = UDim2.new(1, 0, 1, -164)
+	holder.Size = UDim2.new(1, 0, 1, -212)
 	holder.CanvasSize = UDim2.new()
 	holder.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	holder.ScrollBarThickness = 6
 	holder.ScrollBarImageColor3 = Theme.colour.textDim
-	holder.LayoutOrder = 3
+	holder.LayoutOrder = 4
 	holder.Parent = surface
 	self.rowHolder = holder
 
@@ -500,6 +616,35 @@ function Panel.new(): Panel
 	rowLayout.Padding = UDim.new(0, Theme.metric.rowGap)
 	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	rowLayout.Parent = holder
+
+	--[[
+		The upgrades scroller shares the same slot as the businesses one.
+
+		Both sit at LayoutOrder 4 and only one is ever visible, so the UIListLayout gives
+		whichever is showing the same space without the panel resizing as the tab changes.
+	]]
+	local upgradeHolder = Instance.new("ScrollingFrame")
+	upgradeHolder.Name = "UpgradeList"
+	upgradeHolder.BackgroundTransparency = 1
+	upgradeHolder.BorderSizePixel = 0
+	upgradeHolder.Size = UDim2.new(1, 0, 1, -212)
+	upgradeHolder.CanvasSize = UDim2.new()
+	upgradeHolder.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	upgradeHolder.ScrollBarThickness = 6
+	upgradeHolder.ScrollBarImageColor3 = Theme.colour.textDim
+	upgradeHolder.LayoutOrder = 4
+	upgradeHolder.Visible = false
+	upgradeHolder.Parent = surface
+	self.upgradeHolder = upgradeHolder
+
+	local upgradeLayout = Instance.new("UIListLayout")
+	upgradeLayout.Padding = UDim.new(0, Theme.metric.rowGap)
+	upgradeLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	upgradeLayout.Parent = upgradeHolder
+
+	for _, config in Upgrades.list do
+		buildUpgradeRow(self, config)
+	end
 
 	--[[
 		Pops live here, not in the surface.
@@ -519,7 +664,31 @@ function Panel.new(): Panel
 
 	-- Paint only. The server already starts every plot on x1, so there is nothing to tell it.
 	highlightBuyMode(self, "x1")
+	self:setTab("businesses")
 	return self
+end
+
+--[[
+	Switch between the businesses list and the upgrades list.
+
+	The buy-mode selector only means anything for businesses, so it hides on the upgrades tab
+	rather than sitting there inert.
+]]
+function Panel.setTab(self: Panel, tab: string): ()
+	self.activeTab = tab
+
+	for key, button in self.tabButtons do
+		local selected = key == tab
+		button.BackgroundColor3 = if selected then Theme.colour.money else Theme.colour.panelDeep
+	end
+
+	self.rowHolder.Visible = tab == "businesses"
+	self.upgradeHolder.Visible = tab == "upgrades"
+
+	local modeBar = self.surface:FindFirstChild("BuyModes")
+	if modeBar and modeBar:IsA("GuiObject") then
+		modeBar.Visible = tab == "businesses"
+	end
 end
 
 --[[
@@ -686,6 +855,25 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 			then Theme.colour.panelDeep
 			elseif business.isCycling then Theme.colour.rowActive
 			else Theme.colour.row
+	end
+
+	for _, upgrade in snapshot.upgrades do
+		local widget = self.upgradeRows[upgrade.id]
+		if widget == nil then
+			continue
+		end
+
+		local config = Upgrades.byId[upgrade.id]
+		local label = widget.button:FindFirstChild("Label")
+		if label and label:IsA("TextLabel") then
+			label.Text = if upgrade.owned then "OWNED" else "BUY"
+		end
+		widget.price.Text = if upgrade.owned then "" else Format.money(config.cost)
+		widget.button.BackgroundColor3 = if upgrade.owned
+			then Theme.colour.greenDeep
+			elseif upgrade.affordable then Theme.colour.green
+			else Theme.colour.panelDeep
+		widget.container.BackgroundTransparency = if upgrade.owned then 0.35 else 0
 	end
 
 	-- The server is the authority on the selected mode, so reconcile rather than assume the

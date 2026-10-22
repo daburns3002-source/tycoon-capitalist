@@ -71,6 +71,37 @@ export type PlotState = {
 	allProfitMultiplier: number,
 	angelEffectiveness: number,
 	businesses: { [BusinessId]: BusinessState },
+	--[[
+		Cash upgrades bought this run, by id.
+
+		Lost on an angel reset, like everything else bought with cash. The multipliers on
+		`businesses` and `allProfitMultiplier` are derived from this set rather than stored
+		independently, so there is one source of truth and no way for them to drift apart.
+	]]
+	upgradesOwned: { [string]: boolean },
+}
+
+--[[
+	One cash upgrade.
+
+	`target` is a business id, "all" for every business, or "angel" for the Angel Investor
+	effectiveness line. For a profit upgrade `multiplier` is the factor (always 3 in the source
+	game); for an angel upgrade it is the amount added to effectiveness, so 0.01 is +1%.
+]]
+export type UpgradeConfig = {
+	id: string,
+	displayName: string,
+	target: string,
+	kind: "profit" | "angelEffectiveness",
+	multiplier: number,
+	cost: BigNumber,
+}
+
+--[[ What the client is told about one upgrade. ]]
+export type UpgradeSnapshot = {
+	id: string,
+	owned: boolean,
+	affordable: boolean,
 }
 
 export type DeviceTier = "Low" | "Medium" | "High"
@@ -136,6 +167,7 @@ export type PlotSnapshot = {
 	buyMode: BuyMode,
 	globalMilestones: number,
 	businesses: { BusinessSnapshot },
+	upgrades: { UpgradeSnapshot },
 }
 
 return nil

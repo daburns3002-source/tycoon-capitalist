@@ -21,6 +21,7 @@ local Cost = require(Shared.Economy.Cost)
 local Cycle = require(Shared.Economy.Cycle)
 local Revenue = require(Shared.Economy.Revenue)
 local Types = require(Shared.Types)
+local Upgrades = require(Shared.Config.Upgrades)
 
 type BigNumber = Types.BigNumber
 type PlotState = Types.PlotState
@@ -80,7 +81,43 @@ function PlotState.new(userId: number): PlotState
 		allProfitMultiplier = 1,
 		angelEffectiveness = 1,
 		businesses = businesses,
+		upgradesOwned = {},
 	}
+end
+
+--[[
+	Recompute every multiplier from the set of owned upgrades.
+
+	Derived rather than incremented on purchase. Incrementing works right up until something
+	needs to remove an upgrade -- an angel reset, a refund, a migration that drops one -- and
+	then the multipliers are silently wrong with no way to notice. Recomputing from the owned
+	set cannot drift, and it is 35 multiplications on a purchase, which is free.
+]]
+function PlotState.recomputeMultipliers(plot: PlotState): ()
+	local allMultiplier = 1
+	local effectiveness = 1
+	local perBusiness: { [Types.BusinessId]: number } = {}
+
+	for _, config in Upgrades.list do
+		if not plot.upgradesOwned[config.id] then
+			continue
+		end
+
+		if config.kind == "angelEffectiveness" then
+			effectiveness += config.multiplier
+		elseif config.target == "all" then
+			allMultiplier *= config.multiplier
+		else
+			local current = perBusiness[config.target] or 1
+			perBusiness[config.target] = current * config.multiplier
+		end
+	end
+
+	plot.allProfitMultiplier = allMultiplier
+	plot.angelEffectiveness = effectiveness
+	for id, state in plot.businesses do
+		state.profitMultiplier = perBusiness[id] or 1
+	end
 end
 
 --[[ Unit counts by business id, for the all-business milestone calculation. ]]

@@ -26,6 +26,7 @@ local Businesses = require(Shared.Config.Businesses)
 local Cost = require(Shared.Economy.Cost)
 local Remotes = require(Shared.Net.Remotes)
 local Types = require(Shared.Types)
+local Upgrades = require(Shared.Config.Upgrades)
 
 local PlotBuilder = require(script.Parent.Parent.World.PlotBuilder)
 local PlotService = require(script.Parent.Parent.Plot.PlotService)
@@ -229,6 +230,49 @@ local function onHireManager(player: Player, businessId: unknown): ()
 end
 
 --[[
+	"Buy this cash upgrade."
+
+	Permanent for the run and bought once. The multipliers are recomputed from the owned set
+	rather than nudged, so there is no path where a double purchase doubles a multiplier.
+]]
+local function onBuyUpgrade(player: Player, upgradeId: unknown): ()
+	local intent = Remotes.toServer.BuyUpgrade
+	local entry = PlotService.get(player)
+	if entry == nil then
+		reject(player, intent, "no plot")
+		return
+	end
+	if not PlotService.mayAct(player, entry) then
+		reject(player, intent, "not your plot")
+		return
+	end
+	if typeof(upgradeId) ~= "string" then
+		reject(player, intent, "bad upgrade id")
+		return
+	end
+
+	local config = Upgrades.byId[upgradeId]
+	if config == nil then
+		reject(player, intent, "unknown upgrade")
+		return
+	end
+
+	local plot = entry.state
+	if plot.upgradesOwned[config.id] then
+		reject(player, intent, "already owned")
+		return
+	end
+	if not PlotState.trySpend(plot, config.cost) then
+		reject(player, intent, "cannot afford")
+		return
+	end
+
+	plot.upgradesOwned[config.id] = true
+	PlotState.recomputeMultipliers(plot)
+	Handlers.pushSnapshot(player, entry)
+end
+
+--[[
 	"I selected a buy mode."
 
 	The server holds the selection because it prices the selected batch for every row. Pushing a
@@ -283,6 +327,7 @@ function Handlers.bind(): ()
 	Remotes.get(Remotes.toServer.BuyUnits).OnServerEvent:Connect(onBuyUnits)
 	Remotes.get(Remotes.toServer.SetBuyMode).OnServerEvent:Connect(onSetBuyMode)
 	Remotes.get(Remotes.toServer.HireManager).OnServerEvent:Connect(onHireManager)
+	Remotes.get(Remotes.toServer.BuyUpgrade).OnServerEvent:Connect(onBuyUpgrade)
 	Remotes.get(Remotes.toServer.SetPanelOpen).OnServerEvent:Connect(onSetPanelOpen)
 end
 

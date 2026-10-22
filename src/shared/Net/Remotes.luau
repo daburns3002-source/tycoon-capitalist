@@ -38,6 +38,9 @@ local TO_SERVER: { [string]: string } = {
 		its own cycle forever, including while the player is away.
 	]]
 	HireManager = "HireManager",
+	-- "Buy this cash upgrade." Payload: upgradeId (string). Permanent for the run, lost on an
+	-- angel reset like everything else bought with cash.
+	BuyUpgrade = "BuyUpgrade",
 	-- "I selected a buy mode." Payload: mode ("x1" | "x10" | "x100" | "max").
 	--
 	-- The mode has to be server state, not client state, because the server prices the selected

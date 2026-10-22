@@ -15,10 +15,12 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local BigNumber = require(Shared.Economy.BigNumber)
 local Businesses = require(Shared.Config.Businesses)
 local Cost = require(Shared.Economy.Cost)
 local Cycle = require(Shared.Economy.Cycle)
 local Types = require(Shared.Types)
+local Upgrades = require(Shared.Config.Upgrades)
 
 local PlotService = require(script.Parent.Parent.Plot.PlotService)
 local PlotState = require(script.Parent.Parent.Plot.PlotState)
@@ -79,6 +81,22 @@ function Snapshot.build(entry: PlotService.Entry, now: number): Types.PlotSnapsh
 		return Businesses.byId[a.id].order < Businesses.byId[b.id].order
 	end)
 
+	--[[
+		Upgrades the player has not bought yet, plus the ones they have.
+
+		Affordability is decided here rather than on the client for the same reason prices are:
+		one authoritative answer, and no way for a modified client to show itself a cheaper
+		number and then be surprised when the purchase is refused.
+	]]
+	local upgrades: { Types.UpgradeSnapshot } = {}
+	for _, config in Upgrades.list do
+		table.insert(upgrades, {
+			id = config.id,
+			owned = plot.upgradesOwned[config.id] == true,
+			affordable = not BigNumber.lt(plot.cash, config.cost),
+		})
+	end
+
 	return {
 		cash = plot.cash,
 		lifetimeEarnings = plot.lifetimeEarnings,
@@ -86,6 +104,7 @@ function Snapshot.build(entry: PlotService.Entry, now: number): Types.PlotSnapsh
 		buyMode = entry.lastBuyMode,
 		globalMilestones = PlotState.globalMilestones(plot),
 		businesses = businesses,
+		upgrades = upgrades,
 	}
 end
 

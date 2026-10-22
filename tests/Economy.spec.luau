@@ -28,7 +28,10 @@ local Cost = require(Economy.Cost)
 local Cycle = require(Economy.Cycle)
 local Format = require(Economy.Format)
 local Revenue = require(Economy.Revenue)
+local ServerScriptService = game:GetService("ServerScriptService")
+local PlotState = require(ServerScriptService.Server.Plot.PlotState)
 local TestRunner = require(ServerStorage.Tests.TestRunner)
+local UpgradeConfig = require(Shared.Config.Upgrades)
 
 local Spec = {}
 
@@ -479,6 +482,72 @@ local function testConfigIntegrity(): (number, number)
 	return t:finish()
 end
 
+local function testUpgradesAndManagers(): (number, number)
+	local t = TestRunner.new("Upgrades")
+
+	local plot = PlotState.new(1)
+
+	-- A fresh plot owns nothing and manages nothing. The second half of that matters: a
+	-- manager must be a deliberate purchase, never granted.
+	t:equals("no upgrades at start", next(plot.upgradesOwned), nil)
+	t:equals("all-business multiplier starts at 1", plot.allProfitMultiplier, 1)
+	t:equals("angel effectiveness starts at 1", plot.angelEffectiveness, 1)
+
+	local unmanaged = 0
+	for _, state in plot.businesses do
+		if not state.hasManager then
+			unmanaged += 1
+		end
+	end
+	t:equals("no business starts with a manager", unmanaged, 10)
+
+	-- A per-business upgrade multiplies only its own business.
+	plot.upgradesOwned.LittleUmbrellas = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("lemonade x3", plot.businesses.LemonadeStand.profitMultiplier, 3)
+	t:equals("newspaper untouched", plot.businesses.NewspaperDelivery.profitMultiplier, 1)
+	t:equals("all-business untouched", plot.allProfitMultiplier, 1)
+
+	-- Tiers stack multiplicatively on the same business, as in the source game.
+	plot.upgradesOwned.NoveltyStraws = true
+	plot.upgradesOwned.ImportedIceCubes = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("three lemonade tiers is x27", plot.businesses.LemonadeStand.profitMultiplier, 27)
+
+	-- An all-business upgrade is separate from the per-business stack, not folded into it.
+	plot.upgradesOwned.Monopoly = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("all-business x3", plot.allProfitMultiplier, 3)
+	t:equals("lemonade still x27", plot.businesses.LemonadeStand.profitMultiplier, 27)
+
+	-- Angel upgrades add a percentage point each, they do not multiply.
+	plot.upgradesOwned.HolyMoola = true
+	plot.upgradesOwned.ImmaculateConsumption = true
+	PlotState.recomputeMultipliers(plot)
+	t:equalsApprox("two angel upgrades is +2%", plot.angelEffectiveness, 1.02, 1e-12)
+
+	-- Recomputing is derived, not incremental: dropping an upgrade must drop its multiplier.
+	-- This is what makes an angel reset safe to implement in Phase 6.
+	plot.upgradesOwned.NoveltyStraws = false
+	plot.upgradesOwned.ImportedIceCubes = false
+	PlotState.recomputeMultipliers(plot)
+	t:equals("removing two tiers returns to x3", plot.businesses.LemonadeStand.profitMultiplier, 3)
+
+	-- Every configured upgrade must point at something real.
+	local danglingTarget = nil
+	for _, config in UpgradeConfig.list do
+		local valid = config.target == "all"
+			or config.target == "angel"
+			or Businesses.byId[config.target] ~= nil
+		if not valid and danglingTarget == nil then
+			danglingTarget = `{config.id} -> {config.target}`
+		end
+	end
+	t:record("every upgrade targets a real business", danglingTarget == nil, danglingTarget)
+
+	return t:finish()
+end
+
 function Spec.run(): boolean
 	print("[economy] running suite")
 
@@ -490,6 +559,7 @@ function Spec.run(): boolean
 		testAngels,
 		testFormat,
 		testConfigIntegrity,
+		testUpgradesAndManagers,
 	}
 
 	local passed, failed = 0, 0
