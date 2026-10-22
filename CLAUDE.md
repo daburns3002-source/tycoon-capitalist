@@ -46,8 +46,13 @@ The economy suite runs in Studio at **202 assertions**.
 - **Phase 8 — social, started.** Angel upgrades give angels a sink, and a global leaderboard
   ranks lifetime earnings on a board in the world.
 
-Next: the Phase 4 polish that is still outstanding (per-device layouts, sound), and publishing,
-without which persistence and the leaderboard cannot be verified at all.
+**Phase 4 is half done and paused.** `UI/Layout.luau` adapts the panel across three viewport
+bands and is wired up and followed on resize. `Config/Audio.luau` and `UI/Sfx.luau` exist and
+type-check, but **no cue is wired to anything yet** -- nothing plays. Picking that up means
+calling `Sfx.start()` from the client entry point and `Sfx.play(...)` at the collect, buy,
+manager, unlock, reset, tab and rejection sites.
+
+After that: publishing, without which persistence and the leaderboard cannot be verified at all.
 
 ## Commands
 

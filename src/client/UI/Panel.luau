@@ -33,6 +33,7 @@ local Upgrades = require(Shared.Config.Upgrades)
 
 local Bubbly = require(script.Parent.Bubbly)
 local Device = require(script.Parent.Parent.Device)
+local Layout = require(script.Parent.Layout)
 local Theme = require(script.Parent.Theme)
 
 local Panel = {}
@@ -64,6 +65,7 @@ type Row = {
 	units: TextLabel,
 	payout: TextLabel,
 	title: TextLabel,
+	collect: TextButton,
 	milestone: TextLabel,
 	progressTrack: Frame,
 	progressFill: Frame,
@@ -105,6 +107,8 @@ export type Panel = typeof(setmetatable(
 		resetArmed: boolean,
 		angelShop: ScrollingFrame,
 		angelRows: { [string]: { button: TextButton, price: TextLabel, container: Frame } },
+		metrics: Layout.Metrics,
+		viewportConnection: RBXScriptConnection?,
 		upgradeRows: { [string]: { button: TextButton, price: TextLabel, container: Frame } },
 		tabButtons: { [string]: TextButton },
 		activeTab: string,
@@ -799,6 +803,7 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 	return {
 		container = container,
 		title = title,
+		collect = collect,
 		units = units,
 		payout = payout,
 		milestone = milestone,
@@ -884,6 +889,8 @@ function Panel.new(): Panel
 		resetArmed = false,
 		angelShop = nil :: any,
 		angelRows = {},
+		metrics = Layout.desktop,
+		viewportConnection = nil,
 		upgradeRows = {},
 		tabButtons = {},
 		activeTab = "businesses",
@@ -993,6 +1000,25 @@ function Panel.new(): Panel
 	-- Paint only. The server already starts every plot on x1, so there is nothing to tell it.
 	highlightBuyMode(self, "x1")
 	self:setTab("businesses")
+
+	--[[
+		Follow the viewport.
+
+		A phone rotating is the obvious case, but this also covers Studio's device emulator and
+		a desktop window being dragged smaller -- all of which produce a viewport the layout was
+		not chosen for if nothing listens.
+	]]
+	local camera = workspace.CurrentCamera
+	if camera then
+		local function refresh(): ()
+			local size = camera.ViewportSize
+			self:applyLayout(Layout.forViewport(size.X, size.Y))
+		end
+
+		refresh()
+		self.viewportConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(refresh)
+	end
+
 	return self
 end
 
@@ -1002,6 +1028,57 @@ end
 	The buy-mode selector only means anything for businesses, so it hides on the upgrades tab
 	rather than sitting there inert.
 ]]
+--[[
+	Resize the panel for the current viewport band.
+
+	Called at construction and whenever the viewport changes -- a phone rotating, a desktop
+	window resizing, Studio's device emulator switching preset. Rows are resized in place rather
+	than rebuilt, so this costs nothing and loses no state.
+
+	On the compact band the per-row hint line is hidden rather than shrunk. At phone width the
+	name, the count and the price are what a purchase decision needs; the hint repeats what the
+	GOALS tab says at length.
+]]
+function Panel.applyLayout(self: Panel, metrics: Layout.Metrics): ()
+	self.metrics = metrics
+
+	self.surface.Size = UDim2.fromScale(metrics.panelWidthScale, metrics.panelHeightScale)
+	local constraint = self.surface:FindFirstChildWhichIsA("UISizeConstraint")
+	if constraint then
+		constraint.MaxSize = Vector2.new(metrics.panelMaxWidth, math.huge)
+	end
+
+	local padding = self.surface:FindFirstChildWhichIsA("UIPadding")
+	if padding then
+		padding.PaddingTop = UDim.new(0, Theme.metric.panelPadding + metrics.topInset)
+	end
+
+	self.cashLabel.TextSize = metrics.cashSize
+
+	for _, button in self.tabButtons do
+		local label = button:FindFirstChild("Label")
+		if label and label:IsA("TextLabel") then
+			label.TextSize = metrics.tabSize
+		end
+	end
+
+	for _, row in self.rows do
+		row.container.Size = UDim2.new(1, -8, 0, metrics.rowHeight)
+		row.title.TextSize = metrics.titleSize
+		row.payout.TextSize = metrics.bodySize
+		row.milestone.Visible = metrics.showRowHint
+
+		row.buyButton.Size = UDim2.fromOffset(metrics.buyWidth, metrics.rowHeight - 54)
+		row.buyButton.Position = UDim2.new(1, -(metrics.buyWidth + 12), 0, 10)
+		row.managerButton.Size = UDim2.fromOffset(metrics.buyWidth, 32)
+		row.managerButton.Position =
+			UDim2.new(1, -(metrics.buyWidth + 12), 0, metrics.rowHeight - 40)
+
+		row.collect.Size = UDim2.new(1, -(metrics.buyWidth + 20), 1, 0)
+		row.progressTrack.Size = UDim2.new(1, -(metrics.buyWidth + 34), 0, 14)
+	end
+end
+
 function Panel.setTab(self: Panel, tab: string): ()
 	self.activeTab = tab
 
@@ -1109,6 +1186,8 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 		if row == nil then
 			row = buildRow(self, business.id)
 			self.rows[business.id] = row
+			-- New rows arrive mid-session, so bring them to the current band immediately.
+			self:applyLayout(self.metrics)
 		end
 
 		row.cycleSeconds = business.cycleSeconds
@@ -1392,6 +1471,10 @@ end
 function Panel.destroy(self: Panel): ()
 	for _, connection in self.connections do
 		connection:Disconnect()
+	end
+	if self.viewportConnection then
+		self.viewportConnection:Disconnect()
+		self.viewportConnection = nil
 	end
 	for _, row in self.rows do
 		if row.fillTween then
