@@ -192,6 +192,43 @@ local function onBuyUnits(player: Player, businessId: unknown, mode: unknown): (
 end
 
 --[[
+	"Hire this business's manager."
+
+	Costs cash, is permanent for the run, and from then on the business restarts its own cycle
+	forever -- the tick does that, so nothing here has to. Refuses when the business is not
+	owned yet (there is nothing to manage), when a manager is already hired (so a client cannot
+	be charged twice), and when the money is not there.
+]]
+local function onHireManager(player: Player, businessId: unknown): ()
+	local intent = Remotes.toServer.HireManager
+	local entry, id = resolve(player, intent, businessId)
+	if entry == nil or id == nil then
+		return
+	end
+
+	local plot = entry.state
+	local state = plot.businesses[id]
+	local config = Businesses.byId[id]
+
+	if state.unitsOwned <= 0 then
+		reject(player, intent, "buy one first")
+		return
+	end
+	if state.hasManager then
+		reject(player, intent, "already hired")
+		return
+	end
+	if not PlotState.trySpend(plot, config.managerCost) then
+		reject(player, intent, "cannot afford")
+		return
+	end
+
+	state.hasManager = true
+	-- The tick picks it up from here and keeps it running.
+	Handlers.pushSnapshot(player, entry)
+end
+
+--[[
 	"I selected a buy mode."
 
 	The server holds the selection because it prices the selected batch for every row. Pushing a
@@ -245,6 +282,7 @@ function Handlers.bind(): ()
 	Remotes.get(Remotes.toServer.StartCycle).OnServerEvent:Connect(onStartCycle)
 	Remotes.get(Remotes.toServer.BuyUnits).OnServerEvent:Connect(onBuyUnits)
 	Remotes.get(Remotes.toServer.SetBuyMode).OnServerEvent:Connect(onSetBuyMode)
+	Remotes.get(Remotes.toServer.HireManager).OnServerEvent:Connect(onHireManager)
 	Remotes.get(Remotes.toServer.SetPanelOpen).OnServerEvent:Connect(onSetPanelOpen)
 end
 

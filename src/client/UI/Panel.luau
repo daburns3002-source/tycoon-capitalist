@@ -72,6 +72,8 @@ type Row = {
 	buyButton: TextButton,
 	buyLabel: TextLabel,
 	buyPrice: TextLabel,
+	managerButton: TextButton,
+	managerLabel: TextLabel,
 	cycleSeconds: number,
 	cycleElapsed: number,
 	receivedAt: number,
@@ -91,6 +93,9 @@ export type Panel = typeof(setmetatable(
 		rows: { [Types.BusinessId]: Row },
 		buyMode: Types.BuyMode,
 		isOpen: boolean,
+		lastRowPopAt: number,
+		lastCashPopAt: number,
+		pendingCashGain: Types.BigNumber,
 		connections: { RBXScriptConnection },
 	},
 	Panel
@@ -337,19 +342,38 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 		outline = Theme.colour.text,
 		textSize = 20,
 	})
-	buyButton.Size = UDim2.fromOffset(150, Theme.metric.rowHeight - 28)
-	buyButton.Position = UDim2.new(1, -162, 0, 14)
+	buyButton.Size = UDim2.fromOffset(150, 64)
+	buyButton.Position = UDim2.new(1, -162, 0, 10)
 	buyButton.ZIndex = 3
-	buyLabel.Size = UDim2.new(1, 0, 0, 26)
-	buyLabel.Position = UDim2.fromOffset(0, 12)
+	buyLabel.Size = UDim2.new(1, 0, 0, 22)
+	buyLabel.Position = UDim2.fromOffset(0, 8)
 
 	local buyPrice = Bubbly.label("BuyPrice", buyButton, {
-		size = 20,
+		size = 19,
 		alignment = Enum.TextXAlignment.Center,
 		gradient = Theme.gradient.money,
 	})
-	buyPrice.Size = UDim2.new(1, 0, 0, 28)
-	buyPrice.Position = UDim2.fromOffset(0, 38)
+	buyPrice.Size = UDim2.new(1, 0, 0, 26)
+	buyPrice.Position = UDim2.fromOffset(0, 30)
+
+	--[[
+		The manager button, under BUY.
+
+		Deliberately its own control rather than a tab elsewhere. Hiring a manager is the single
+		most important decision on a business -- it is what makes the game idle at all -- and the
+		source game puts it behind a side menu where a new player can miss that entirely. Here it
+		sits next to the thing it automates.
+	]]
+	local managerButton, managerLabel = Bubbly.button("Manager", container, {
+		fill = Theme.colour.blue,
+		outline = Theme.colour.text,
+		corner = Theme.metric.chipCorner,
+		textSize = 15,
+	})
+	managerButton.Size = UDim2.fromOffset(150, 32)
+	managerButton.Position = UDim2.new(1, -162, 0, 78)
+	managerButton.ZIndex = 3
+	managerLabel.Size = UDim2.fromScale(1, 1)
 
 	table.insert(
 		self.connections,
@@ -361,6 +385,12 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 		self.connections,
 		buyButton.Activated:Connect(function()
 			Remotes.get(Remotes.toServer.BuyUnits):FireServer(id, self.buyMode)
+		end)
+	)
+	table.insert(
+		self.connections,
+		managerButton.Activated:Connect(function()
+			Remotes.get(Remotes.toServer.HireManager):FireServer(id)
 		end)
 	)
 
@@ -381,6 +411,8 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 		buyButton = buyButton,
 		buyLabel = buyLabel,
 		buyPrice = buyPrice,
+		managerButton = managerButton,
+		managerLabel = managerLabel,
 		cycleSeconds = config.cycleSeconds,
 		cycleElapsed = 0,
 		receivedAt = os.clock(),
@@ -442,6 +474,9 @@ function Panel.new(): Panel
 		rows = {},
 		buyMode = "x1" :: Types.BuyMode,
 		isOpen = false,
+		lastRowPopAt = 0,
+		lastCashPopAt = 0,
+		pendingCashGain = BigNumber.zero,
 		connections = {},
 	}, Panel)
 
@@ -523,7 +558,8 @@ local function syncFill(row: Row, business: Types.BusinessSnapshot): ()
 		end
 		row.cycleToken = 0
 		row.progressFill.Size = UDim2.fromScale(0, 1)
-		row.tapHint.Visible = business.unitsOwned > 0
+		-- A managed business is never waiting for a tap, so never prompt for one.
+		row.tapHint.Visible = business.unitsOwned > 0 and not business.hasManager
 		return
 	end
 
@@ -610,6 +646,27 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 			elseif business.isCycling then Format.duration(remaining)
 			else Format.duration(business.cycleSeconds)
 
+		--[[
+			The manager control has three states: unavailable until you own one unit, a priced
+			hire offer, and then the manager's name once hired. Showing the name rather than a
+			tick is the source game's touch and it is the right one -- "Cabe Johnson" reads as
+			someone running the stand, which is the fiction the whole mechanic rests on.
+		]]
+		if not owned then
+			row.managerButton.Visible = false
+		elseif business.hasManager then
+			row.managerButton.Visible = true
+			row.managerButton.BackgroundColor3 = Theme.colour.greenDeep
+			row.managerLabel.Text = config.managerName
+		else
+			row.managerButton.Visible = true
+			local affordableManager = not BigNumber.lt(snapshot.cash, config.managerCost)
+			row.managerButton.BackgroundColor3 = if affordableManager
+				then Theme.colour.blue
+				else Theme.colour.panelDeep
+			row.managerLabel.Text = `MANAGER {Format.money(config.managerCost)}`
+		end
+
 		row.chip.BackgroundTransparency = if owned then 0 else 0.55
 		row.title.TextTransparency = if owned then 0 else 0.25
 		row.progressTrack.Visible = owned
@@ -651,6 +708,28 @@ function Panel.notifyCashGain(self: Panel, amount: Types.BigNumber): ()
 	end
 
 	--[[
+		Rate-limited, with the skipped earnings rolled into the next pop.
+
+		A managed Lemonade Stand past the 50-unit milestone pays every 0.15 seconds, so an
+		unlimited pop rate turns the top of the panel into a smear of overlapping numbers. The
+		budget comes from the device tier -- 16/sec on desktop, 4 on a phone -- which is what
+		`numberPopsPerSecond` was always for.
+
+		Carrying the remainder forward matters: dropping the skipped payouts would show the
+		player less than they earned, which is worse than showing it less often.
+	]]
+	self.pendingCashGain = BigNumber.add(self.pendingCashGain, amount)
+
+	local now = os.clock()
+	if now - self.lastCashPopAt < 1 / Device.budget().numberPopsPerSecond then
+		return
+	end
+	self.lastCashPopAt = now
+
+	local total = self.pendingCashGain
+	self.pendingCashGain = BigNumber.zero
+
+	--[[
 		Sits flush against the end of the cash figure.
 
 		`TextBounds` is the width of the rendered text, not of its container, so this tracks the
@@ -662,7 +741,7 @@ function Panel.notifyCashGain(self: Panel, amount: Types.BigNumber): ()
 	local origin = label.AbsolutePosition - self.overlay.AbsolutePosition
 	Bubbly.popNumber(
 		self.overlay,
-		`+{Format.money(amount)}`,
+		`+{Format.money(total)}`,
 		UDim2.fromOffset(origin.X + label.TextBounds.X + 14, origin.Y + label.AbsoluteSize.Y / 2),
 		Vector2.new(0, 0.5)
 	)
@@ -681,6 +760,14 @@ function Panel.notifyPaid(self: Panel, id: Types.BusinessId, amount: Types.BigNu
 	if row == nil then
 		return
 	end
+
+	-- Same budget as the cash pop. The row's own bar already conveys the rate, so a skipped
+	-- pop here loses nothing.
+	local now = os.clock()
+	if now - self.lastRowPopAt < 1 / Device.budget().numberPopsPerSecond then
+		return
+	end
+	self.lastRowPopAt = now
 
 	-- The bar itself is too quick to read at a 0.6s cycle; the flash is what makes a completed
 	-- cycle register.

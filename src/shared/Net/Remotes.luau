@@ -31,6 +31,13 @@ local TO_SERVER: { [string]: string } = {
 	StartCycle = "StartCycle",
 	-- "Buy units." Payload: businessId (string), mode ("x1" | "x10" | "x100" | "max").
 	BuyUnits = "BuyUnits",
+	--[[
+		"Hire this business's manager." Payload: businessId (string).
+
+		The manager is what turns a clicker into an idle game: from here the business restarts
+		its own cycle forever, including while the player is away.
+	]]
+	HireManager = "HireManager",
 	-- "I selected a buy mode." Payload: mode ("x1" | "x10" | "x100" | "max").
 	--
 	-- The mode has to be server state, not client state, because the server prices the selected

@@ -35,6 +35,9 @@ export type BusinessConfig = {
 	cycleSeconds: number,
 	revenuePerCycle: BigNumber,
 	managerCost: BigNumber,
+	-- The source game names every manager after a pun or a pop-culture reference. Flavour, but
+	-- it is the flavour that makes hiring one feel like hiring someone.
+	managerName: string,
 }
 
 --[[

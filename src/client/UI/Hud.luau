@@ -13,6 +13,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local BigNumber = require(Shared.Economy.BigNumber)
 local Format = require(Shared.Economy.Format)
 local Types = require(Shared.Types)
 
@@ -31,6 +32,8 @@ export type Hud = typeof(setmetatable(
 		lifetimeValue: TextLabel,
 		hint: Frame,
 		hintShown: boolean,
+		lastPopAt: number,
+		pendingGain: Types.BigNumber,
 	},
 	Hud
 ))
@@ -108,6 +111,8 @@ function Hud.new(): Hud
 		lifetimeValue = lifetimeValue,
 		hint = hint,
 		hintShown = true,
+		lastPopAt = 0,
+		pendingGain = BigNumber.zero,
 	}, Hud)
 end
 
@@ -127,12 +132,25 @@ function Hud.popGain(self: Hud, amount: Types.BigNumber): ()
 		return
 	end
 
+	-- Rate-limited to the device tier's budget, carrying skipped earnings forward. See the
+	-- note on Panel.notifyCashGain: a managed business can pay several times a second.
+	self.pendingGain = BigNumber.add(self.pendingGain, amount)
+
+	local now = os.clock()
+	if now - self.lastPopAt < 1 / Device.budget().numberPopsPerSecond then
+		return
+	end
+	self.lastPopAt = now
+
+	local total = self.pendingGain
+	self.pendingGain = BigNumber.zero
+
 	-- Flush against the end of the figure, tracking its rendered width, same as the panel's.
 	local value = self.cashValue
 	local origin = value.AbsolutePosition - self.overlay.AbsolutePosition
 	Bubbly.popNumber(
 		self.overlay,
-		`+{Format.money(amount)}`,
+		`+{Format.money(total)}`,
 		UDim2.fromOffset(origin.X + value.TextBounds.X + 12, origin.Y + value.AbsoluteSize.Y / 2),
 		Vector2.new(0, 0.5)
 	)

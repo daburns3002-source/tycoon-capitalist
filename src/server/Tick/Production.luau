@@ -57,6 +57,17 @@ function Production.advance(plot: PlotState, now: number): { Payment }
 	local payments: { Payment } = {}
 
 	for id, state in plot.businesses do
+		--[[
+			A managed business never sits idle.
+
+			This is the whole mechanic: the tick starts a cycle for any business that has a
+			manager and is not already running one. It covers hiring, rejoining, and the moment
+			after a payout, without any of those paths needing to remember to kick it off.
+		]]
+		if state.hasManager and state.cycleStartedAt == nil and state.unitsOwned > 0 then
+			state.cycleStartedAt = now
+		end
+
 		local startedAt = state.cycleStartedAt
 		if startedAt == nil then
 			continue
