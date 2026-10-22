@@ -29,8 +29,10 @@ local Cycle = require(Economy.Cycle)
 local Format = require(Economy.Format)
 local Revenue = require(Economy.Revenue)
 local ServerScriptService = game:GetService("ServerScriptService")
+local FakeStore = require(ServerStorage.Tests.FakeStore)
 local Offline = require(ServerScriptService.Server.Tick.Offline)
 local PlotState = require(ServerScriptService.Server.Plot.PlotState)
+local Profiles = require(ServerScriptService.Server.Data.Profiles)
 local Serialise = require(ServerScriptService.Server.Data.Serialise)
 local TestRunner = require(ServerStorage.Tests.TestRunner)
 local UnlockConfig = require(Shared.Config.Unlocks)
@@ -725,6 +727,86 @@ local function testOfflineEarnings(): (number, number)
 	return t:finish()
 end
 
+local function testSessionLock(): (number, number)
+	local t = TestRunner.new("SessionLock")
+
+	local fake = FakeStore.new()
+	local clock = FakeStore.clock(10000)
+	local userId = 4242
+
+	local function asServer(jobId: string): ()
+		Profiles.configure({ store = fake.store, jobId = jobId, now = clock.now })
+	end
+
+	local function profileOf(): Serialise.SavedProfile
+		local plot = PlotState.new(userId)
+		plot.cash = BigNumber.fromParts(5, 12)
+		return Serialise.save(plot)
+	end
+
+	-- A new player on server A: nothing stored, lock taken, writing allowed.
+	asServer("A")
+	local first = Profiles.load(userId)
+	t:equals("new profile has no data", first.stored, nil)
+	t:equals("and may save", first.canSave, true)
+
+	t:equals("server A saves", Profiles.save(userId, profileOf(), false), true)
+	t:isTrue("data is stored", fake.data[`plot_{userId}`].data ~= nil)
+
+	-- Server B tries to take it while A's lock is fresh. It must be refused, and crucially it
+	-- must not get the data either -- a reader that is refused the lock but handed the profile
+	-- would be one bad branch away from writing it back.
+	asServer("B")
+	local blocked = Profiles.load(userId)
+	t:equals("server B is refused", blocked.canSave, false)
+	t:equals("and gets no data", blocked.stored, nil)
+	t:isTrue("the refusal says why", blocked.reason ~= nil)
+
+	-- B must not be able to write either, even if it tried anyway.
+	local writesBefore = fake.writes
+	t:equals("server B's save reports failure", Profiles.save(userId, profileOf(), false), false)
+	t:equals("and wrote nothing", fake.writes, writesBefore)
+	t:isTrue("its write was aborted", fake.aborts > 0)
+	t:equals("the lock is still A's", fake.data[`plot_{userId}`].lock.jobId, "A")
+
+	-- Age the lock past the timeout. A crashed server never releases one, so an abandoned lock
+	-- has to become takeable or the player is locked out forever.
+	clock.advance(Profiles.lockTimeout + 1)
+	local stolen = Profiles.load(userId)
+	t:equals("a stale lock can be taken", stolen.canSave, true)
+	t:isTrue("and the data comes with it", stolen.stored ~= nil)
+	t:equals("the lock is now B's", fake.data[`plot_{userId}`].lock.jobId, "B")
+
+	-- Now A has lost the lock. Its next autosave must abandon rather than win.
+	asServer("A")
+	local beforeStaleWrite = fake.writes
+	t:equals(
+		"the server that lost the lock reports failure",
+		Profiles.save(userId, profileOf(), false),
+		false
+	)
+	t:equals("and writes nothing", fake.writes, beforeStaleWrite)
+
+	-- B leaves cleanly: the lock is released so the next server need not wait it out.
+	asServer("B")
+	t:equals("leaving saves", Profiles.save(userId, profileOf(), true), true)
+	t:equals("and releases the lock", fake.data[`plot_{userId}`].lock, nil)
+
+	asServer("C")
+	local afterRelease = Profiles.load(userId)
+	t:equals("the next server loads immediately", afterRelease.canSave, true)
+	t:isTrue("with the data intact", afterRelease.stored ~= nil)
+
+	-- A round trip through the store, to prove the lock work did not cost the payload.
+	local restored = Serialise.load(afterRelease.stored, function()
+		return PlotState.new(userId)
+	end)
+	t:bigEquals("cash survived the store", restored.cash, 5, 12)
+
+	Profiles.configure(nil)
+	return t:finish()
+end
+
 function Spec.run(): boolean
 	print("[economy] running suite")
 
@@ -740,6 +822,7 @@ function Spec.run(): boolean
 		testUnlocks,
 		testPersistence,
 		testOfflineEarnings,
+		testSessionLock,
 	}
 
 	local passed, failed = 0, 0

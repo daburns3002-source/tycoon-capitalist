@@ -30,6 +30,7 @@ local STORE_SCOPE = "v1"
 
 --[[ How long before another server may take a lock it did not place. ]]
 local LOCK_TIMEOUT = 120
+Profiles.lockTimeout = LOCK_TIMEOUT
 
 --[[ How long to keep retrying a load before giving up and letting the player in unsaved. ]]
 local LOAD_ATTEMPTS = 4
@@ -49,10 +50,56 @@ export type LoadResult = {
 	reason: string?,
 }
 
-local store: DataStore? = nil
+--[[
+	The slice of the DataStore API this module uses.
+
+	Declared as a type rather than taken as a concrete `DataStore` so the suite can drive the
+	whole lock protocol against an in-memory fake. The lock is the most consequential code
+	here -- its failure mode is two servers writing one profile and the loser silently
+	discarding weeks of progress -- and it was previously untestable without publishing the
+	place, which is not a reasonable precondition for testing it.
+]]
+export type Store = {
+	UpdateAsync: (self: any, key: string, transform: (any) -> any) -> any,
+}
+
+local store: Store? = nil
 local available = true
 
-local function getStore(): DataStore?
+--[[
+	Injected for tests: a fake store, a chosen job id, and a controllable clock.
+
+	The clock matters because lock staleness is a 120-second rule, and a test that proves a
+	stale lock can be taken should not take two minutes to run.
+]]
+local injected: { store: Store, jobId: string, now: () -> number }? = nil
+
+function Profiles.configure(config: { store: Store, jobId: string, now: () -> number }?): ()
+	injected = config
+	if config ~= nil then
+		available = true
+	end
+end
+
+local function clock(): number
+	local config = injected
+	return if config then config.now() else os.time()
+end
+
+local function currentJobId(): string
+	local config = injected
+	if config then
+		return config.jobId
+	end
+	return if RunService:IsStudio() then "studio" else game.JobId
+end
+
+local function getStore(): Store?
+	local config = injected
+	if config then
+		return config.store
+	end
+
 	if not available then
 		return nil
 	end
@@ -71,7 +118,7 @@ local function getStore(): DataStore?
 		return nil
 	end
 
-	store = result
+	store = result :: any
 	return store
 end
 
@@ -88,7 +135,7 @@ local function lockIsStale(lock: unknown): boolean
 	if typeof(placedAt) ~= "number" then
 		return true
 	end
-	return os.time() - placedAt > LOCK_TIMEOUT
+	return clock() - placedAt > LOCK_TIMEOUT
 end
 
 --[[
@@ -102,7 +149,7 @@ function Profiles.load(userId: number): LoadResult
 		return { stored = nil, canSave = false, reason = "datastore unavailable" }
 	end
 
-	local jobId = if RunService:IsStudio() then "studio" else game.JobId
+	local jobId = currentJobId()
 
 	for attempt = 1, LOAD_ATTEMPTS do
 		local blocked = false
@@ -118,7 +165,7 @@ function Profiles.load(userId: number): LoadResult
 				end
 
 				local profile = if typeof(current) == "table" then current else {}
-				profile.lock = { jobId = jobId, placedAt = os.time() }
+				profile.lock = { jobId = jobId, placedAt = clock() }
 				return profile
 			end)
 		end)
@@ -129,7 +176,11 @@ function Profiles.load(userId: number): LoadResult
 		end
 
 		if attempt < LOAD_ATTEMPTS then
-			task.wait(RETRY_DELAY)
+			-- Injected runs skip the backoff; the fake store never has a transient failure and
+			-- waiting would only make the suite slow.
+			if injected == nil then
+				task.wait(RETRY_DELAY)
+			end
 		end
 	end
 
@@ -157,28 +208,46 @@ function Profiles.save(
 		return false
 	end
 
-	local jobId = if RunService:IsStudio() then "studio" else game.JobId
+	local jobId = currentJobId()
 
-	local ok = pcall(function()
-		dataStore:UpdateAsync(keyFor(userId), function(current: any)
+	local abandoned = false
+
+	local ok, result = pcall(function()
+		return dataStore:UpdateAsync(keyFor(userId), function(current: any)
 			if typeof(current) == "table" and current.lock ~= nil then
 				if current.lock.jobId ~= jobId and not lockIsStale(current.lock) then
 					-- Someone else owns this profile now. Abandon the write rather than win it.
+					abandoned = true
 					return nil
 				end
 			end
 
 			local next = if typeof(current) == "table" then current else {}
 			next.data = profile
-			next.lock = if releaseLock then nil else { jobId = jobId, placedAt = os.time() }
+			next.lock = if releaseLock then nil else { jobId = jobId, placedAt = clock() }
 			return next
 		end)
 	end)
 
 	if not ok then
 		warn(`[profiles] save failed for {userId}`)
+		return false
 	end
-	return ok
+
+	--[[
+		An abandoned write is not a success.
+
+		`pcall` returns true here either way -- the call completed, it just declined to write --
+		so returning `ok` would tell a caller its save landed when another server now owns the
+		profile. Writing the test for this is what surfaced it; the old return value could not
+		distinguish "saved" from "silently did nothing".
+	]]
+	if abandoned or result == nil then
+		warn(`[profiles] save abandoned for {userId}: the lock is held elsewhere`)
+		return false
+	end
+
+	return true
 end
 
 --[[ Whether saving is possible at all in this session. Surfaced so the server can say so once. ]]

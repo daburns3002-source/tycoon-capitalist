@@ -133,21 +133,21 @@ PR #3 is unreviewed.
 touches a DataStore -- `Data/Profiles.luau` -- has only ever executed its failure branch, because
 Studio cannot reach a DataStore for an unpublished place.
 
-Specifically untested:
+Still untested without publishing:
 
-- that a profile written on one session is read back on the next
-- the session lock: that a second server is refused while a lock is fresh, that a stale lock can
-  be taken, and that a server which lost its lock abandons its write rather than winning it
+- that a profile written on one session is read back on the next, through Roblox's DataStore
+  rather than the fake
 - autosave on its interval, and the `BindToClose` write
 - a welcome-back card driven by a real absence rather than a remote fired by hand
 
-The lock logic is the most dangerous untested code in the project: its failure mode is two
-servers writing one profile, and the loser silently discarding weeks of progress with nothing to
-tell the player it happened.
+**The session lock is now tested**, against an in-memory fake rather than a real DataStore.
+`Profiles.configure` injects a store, a job id and a clock, so the suite drives the whole
+protocol -- a lock taken, a second server refused and given no data, its write abandoned, the
+lock aged past its timeout and taken, the losing server abandoning its next write, a clean
+release, and the next server loading immediately. Twenty assertions.
 
-That does not have to wait for publishing. `Profiles` could take its store as an argument rather
-than reaching for `DataStoreService` itself, which would let the suite drive the whole lock
-protocol against an in-memory fake. Worth doing before this ships, published or not.
+That leaves only the parts that genuinely need a published universe: that Roblox's own
+`UpdateAsync` behaves as the fake assumes, autosave on a timer, and `BindToClose`.
 
 ## Deferred, deliberately
 
