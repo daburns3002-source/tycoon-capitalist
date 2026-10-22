@@ -165,6 +165,13 @@ export type PlotSnapshot = {
 	lifetimeEarnings: BigNumber,
 	angels: number,
 	buyMode: BuyMode,
+	--[[
+		Angels gained by resetting right now, and the lifetime earnings the next whole angel
+		needs. Both computed server-side -- the client must never be the thing that decides how
+		much a reset is worth.
+	]]
+	pendingAngels: number,
+	nextAngelAt: BigNumber,
 	globalMilestones: number,
 	businesses: { BusinessSnapshot },
 	upgrades: { UpgradeSnapshot },

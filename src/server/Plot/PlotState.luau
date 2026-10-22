@@ -217,6 +217,49 @@ function PlotState.quantityForMode(
 end
 
 --[[
+	Reset the plot and bank the angels.
+
+	What survives: angels, lifetime earnings, and the count of angels sacrificed. What goes:
+	cash, every business back to zero units, every manager, every cash upgrade, every running
+	cycle.
+
+	`earningsBeforeThisRun` moves up to the current lifetime total. That is the whole trick of
+	the formula -- the next reset pays for the difference of two square roots, so a run only
+	earns angels for what *it* added. Forgetting this line would pay the player for their entire
+	history again on every reset.
+
+	Lifetime earnings are never reduced. They are the basis of the angel calculation, so a reset
+	that touched them would quietly change what every future reset is worth.
+
+	Returns the angels gained, which is zero when the run did not reach the next whole one.
+]]
+function PlotState.reset(plot: PlotState): number
+	local gained = PlotState.pendingAngels(plot)
+
+	plot.angels += gained
+	plot.earningsBeforeThisRun = plot.lifetimeEarnings
+	plot.cash = BigNumber.zero
+
+	for _, state in plot.businesses do
+		state.unitsOwned = 0
+		state.hasManager = false
+		state.hasAccountant = false
+		state.cycleStartedAt = nil
+		state.profitMultiplier = 1
+	end
+
+	-- The free starting stand comes back, exactly as a new plot gets one.
+	plot.businesses.LemonadeStand.unitsOwned = 1
+
+	table.clear(plot.upgradesOwned)
+	-- Derived from the now-empty set, so the multipliers cannot survive the reset that cleared
+	-- the upgrades behind them.
+	PlotState.recomputeMultipliers(plot)
+
+	return gained
+end
+
+--[[
 	Angels this plot would gain by resetting now. Phase 6 consumes this; the panel shows it
 	from Phase 2 so the number is visible long before the button exists.
 ]]

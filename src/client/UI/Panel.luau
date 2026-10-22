@@ -21,6 +21,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local AngelMath = require(Shared.Economy.Angels)
 local BigNumber = require(Shared.Economy.BigNumber)
 local Businesses = require(Shared.Config.Businesses)
 local Format = require(Shared.Economy.Format)
@@ -90,6 +91,14 @@ export type Panel = typeof(setmetatable(
 		angelLabel: TextLabel,
 		rowHolder: ScrollingFrame,
 		upgradeHolder: ScrollingFrame,
+		angelView: Frame,
+		angelHeadline: TextLabel,
+		angelBonus: TextLabel,
+		angelPending: TextLabel,
+		angelNext: TextLabel,
+		resetButton: TextButton,
+		resetLabel: TextLabel,
+		resetArmed: boolean,
 		upgradeRows: { [string]: { button: TextButton, price: TextLabel, container: Frame } },
 		tabButtons: { [string]: TextButton },
 		activeTab: string,
@@ -196,8 +205,8 @@ local function buildTabs(self: Panel, parent: Frame): ()
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = bar
 
-	local names = { businesses = "BUSINESSES", upgrades = "UPGRADES" }
-	local order = { "businesses", "upgrades" }
+	local names = { businesses = "BUSINESSES", upgrades = "UPGRADES", angels = "ANGELS" }
+	local order = { "businesses", "upgrades", "angels" }
 
 	for index, key in order do
 		local button = Bubbly.button(key, bar, {
@@ -206,7 +215,7 @@ local function buildTabs(self: Panel, parent: Frame): ()
 			text = names[key],
 			textSize = 18,
 		})
-		button.Size = UDim2.new(0.5, -Theme.metric.rowGap / 2, 1, 0)
+		button.Size = UDim2.new(1 / 3, -Theme.metric.rowGap, 1, 0)
 		button.LayoutOrder = index
 		self.tabButtons[key] = button
 
@@ -277,6 +286,104 @@ local function buildUpgradeRow(self: Panel, config: Types.UpgradeConfig): ()
 		self.connections,
 		button.Activated:Connect(function()
 			Remotes.get(Remotes.toServer.BuyUpgrade):FireServer(config.id)
+		end)
+	)
+end
+
+--[[
+	The Angels view: what you have, what a reset would pay, and the button that does it.
+
+	Deliberately wordy where the rest of the UI is terse. A reset destroys everything the player
+	has built this run, and the only thing that makes it a good idea rather than a catastrophe is
+	understanding that angels are permanent and the next run is faster. A number with no
+	explanation would just look like a punishment.
+]]
+local function buildAngelView(self: Panel, parent: Frame): ()
+	local view = Bubbly.panel("AngelView", parent, Theme.colour.panelDeep)
+	view.Size = UDim2.new(1, 0, 1, -212)
+	view.LayoutOrder = 4
+	view.Visible = false
+	self.angelView = view
+
+	local chip = Bubbly.iconChip(view, "😇", Theme.colour.money)
+	chip.Position = UDim2.fromOffset(20, 20)
+
+	self.angelHeadline = Bubbly.label("Headline", view, {
+		text = "0 Angel Investors",
+		size = 30,
+		gradient = Theme.gradient.money,
+	})
+	self.angelHeadline.Size = UDim2.new(1, -110, 0, 38)
+	self.angelHeadline.Position = UDim2.fromOffset(90, 18)
+
+	self.angelBonus = Bubbly.label("Bonus", view, {
+		size = 17,
+		colour = Theme.colour.textDim,
+		strokeThickness = Theme.metric.textStrokeSmall,
+	})
+	self.angelBonus.Size = UDim2.new(1, -110, 0, 22)
+	self.angelBonus.Position = UDim2.fromOffset(90, 56)
+
+	self.angelPending = Bubbly.label("Pending", view, {
+		size = 24,
+		alignment = Enum.TextXAlignment.Center,
+		gradient = Theme.gradient.green,
+	})
+	self.angelPending.Size = UDim2.new(1, -40, 0, 32)
+	self.angelPending.Position = UDim2.fromOffset(20, 108)
+
+	self.angelNext = Bubbly.label("NextAngel", view, {
+		size = 16,
+		alignment = Enum.TextXAlignment.Center,
+		colour = Theme.colour.textDim,
+		strokeThickness = Theme.metric.textStrokeSmall,
+	})
+	self.angelNext.Size = UDim2.new(1, -40, 0, 22)
+	self.angelNext.Position = UDim2.fromOffset(20, 144)
+
+	local explain = Bubbly.label("Explain", view, {
+		text = "Resetting clears your cash, businesses, managers and upgrades. "
+			.. "Angels are kept forever and make every future run faster.",
+		size = 15,
+		alignment = Enum.TextXAlignment.Center,
+		colour = Theme.colour.textDim,
+		strokeThickness = Theme.metric.textStrokeSmall,
+	})
+	explain.Size = UDim2.new(1, -40, 0, 48)
+	explain.Position = UDim2.fromOffset(20, 182)
+	explain.TextWrapped = true
+
+	local button, label = Bubbly.button("Reset", view, {
+		fill = Theme.colour.red,
+		outline = Theme.colour.text,
+		text = "RESET FOR ANGELS",
+		textSize = 20,
+	})
+	button.Size = UDim2.new(1, -80, 0, 62)
+	button.Position = UDim2.fromOffset(40, 244)
+	self.resetButton = button
+	self.resetLabel = label
+
+	--[[
+		Two taps, not one.
+
+		The first arms it and changes the wording; the second commits. An irreversible action
+		one tap away from a scrolling list is a mis-tap waiting to wipe somebody's run, and this
+		costs nothing. The server refuses a reset worth no angels regardless -- the confirmation
+		is for the case where it *is* worth something and the player still did not mean it.
+	]]
+	table.insert(
+		self.connections,
+		button.Activated:Connect(function()
+			if not self.resetArmed then
+				self.resetArmed = true
+				self.resetLabel.Text = "TAP AGAIN TO CONFIRM"
+				button.BackgroundColor3 = Theme.colour.redDeep
+				return
+			end
+
+			self.resetArmed = false
+			Remotes.get(Remotes.toServer.PerformReset):FireServer()
 		end)
 	)
 end
@@ -581,6 +688,14 @@ function Panel.new(): Panel
 		angelLabel = nil :: any,
 		rowHolder = nil :: any,
 		upgradeHolder = nil :: any,
+		angelView = nil :: any,
+		angelHeadline = nil :: any,
+		angelBonus = nil :: any,
+		angelPending = nil :: any,
+		angelNext = nil :: any,
+		resetButton = nil :: any,
+		resetLabel = nil :: any,
+		resetArmed = false,
 		upgradeRows = {},
 		tabButtons = {},
 		activeTab = "businesses",
@@ -646,6 +761,8 @@ function Panel.new(): Panel
 		buildUpgradeRow(self, config)
 	end
 
+	buildAngelView(self, surface)
+
 	--[[
 		Pops live here, not in the surface.
 
@@ -684,6 +801,15 @@ function Panel.setTab(self: Panel, tab: string): ()
 
 	self.rowHolder.Visible = tab == "businesses"
 	self.upgradeHolder.Visible = tab == "upgrades"
+	self.angelView.Visible = tab == "angels"
+
+	-- Leaving the tab disarms the reset, so a confirmation cannot be left primed behind a tab
+	-- and tripped much later by someone who has forgotten it is armed.
+	if tab ~= "angels" and self.resetArmed then
+		self.resetArmed = false
+		self.resetLabel.Text = "RESET FOR ANGELS"
+		self.resetButton.BackgroundColor3 = Theme.colour.red
+	end
 
 	local modeBar = self.surface:FindFirstChild("BuyModes")
 	if modeBar and modeBar:IsA("GuiObject") then
@@ -856,6 +982,23 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 			elseif business.isCycling then Theme.colour.rowActive
 			else Theme.colour.row
 	end
+
+	-- A rate, not a money value, so this arithmetic is plain-number work by design.
+	local perAngel = AngelMath.profitPerAngel
+	local bonusPercent = math.floor(perAngel * snapshot.angels * 100 + 0.5)
+	self.angelHeadline.Text = `{Format.integer(snapshot.angels)} Angel Investors`
+	self.angelBonus.Text = `+{Format.integer(bonusPercent)}% to all profits, permanently`
+
+	if snapshot.pendingAngels > 0 then
+		self.angelPending.Text = `Reset now for {Format.integer(snapshot.pendingAngels)} more`
+		self.resetButton.BackgroundColor3 = if self.resetArmed
+			then Theme.colour.redDeep
+			else Theme.colour.red
+	else
+		self.angelPending.Text = "No angels earned yet this run"
+		self.resetButton.BackgroundColor3 = Theme.colour.panelDeep
+	end
+	self.angelNext.Text = `next angel at {Format.money(snapshot.nextAngelAt)} lifetime earnings`
 
 	for _, upgrade in snapshot.upgrades do
 		local widget = self.upgradeRows[upgrade.id]

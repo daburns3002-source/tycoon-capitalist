@@ -41,6 +41,14 @@ local TO_SERVER: { [string]: string } = {
 	-- "Buy this cash upgrade." Payload: upgradeId (string). Permanent for the run, lost on an
 	-- angel reset like everything else bought with cash.
 	BuyUpgrade = "BuyUpgrade",
+	--[[
+		"Reset for Angel Investors." No payload.
+
+		Destructive and irreversible: it wipes cash, units, managers and upgrades. The client
+		confirms before sending, but the server does not rely on that -- it refuses a reset that
+		would pay nothing, which is the case a confirmation dialog exists to prevent.
+	]]
+	PerformReset = "PerformReset",
 	-- "I selected a buy mode." Payload: mode ("x1" | "x10" | "x100" | "max").
 	--
 	-- The mode has to be server state, not client state, because the server prices the selected

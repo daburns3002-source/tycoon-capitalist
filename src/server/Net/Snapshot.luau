@@ -15,6 +15,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Angels = require(Shared.Economy.Angels)
 local BigNumber = require(Shared.Economy.BigNumber)
 local Businesses = require(Shared.Config.Businesses)
 local Cost = require(Shared.Economy.Cost)
@@ -102,6 +103,8 @@ function Snapshot.build(entry: PlotService.Entry, now: number): Types.PlotSnapsh
 		lifetimeEarnings = plot.lifetimeEarnings,
 		angels = plot.angels,
 		buyMode = entry.lastBuyMode,
+		pendingAngels = PlotState.pendingAngels(plot),
+		nextAngelAt = Angels.earningsForNextAngel(Angels.totalForEarnings(plot.lifetimeEarnings)),
 		globalMilestones = PlotState.globalMilestones(plot),
 		businesses = businesses,
 		upgrades = upgrades,

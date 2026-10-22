@@ -273,6 +273,42 @@ local function onBuyUpgrade(player: Player, upgradeId: unknown): ()
 end
 
 --[[
+	"Reset for Angel Investors."
+
+	Refuses when the run would pay no angels. A confirmation dialog on the client is a courtesy;
+	this is the rule. Wiping a player's entire run for nothing is the single most damaging thing
+	this game could do to someone, so it is refused at the authoritative end rather than trusted
+	to a prompt that a modified client simply would not show.
+]]
+local function onPerformReset(player: Player): ()
+	local intent = Remotes.toServer.PerformReset
+	local entry = PlotService.get(player)
+	if entry == nil then
+		reject(player, intent, "no plot")
+		return
+	end
+	if not PlotService.mayAct(player, entry) then
+		reject(player, intent, "not your plot")
+		return
+	end
+
+	local plot = entry.state
+	if PlotState.pendingAngels(plot) <= 0 then
+		reject(player, intent, "no angels yet")
+		return
+	end
+
+	PlotState.reset(plot)
+
+	-- The plot is bare again, so every building goes back to hidden.
+	for id, state in plot.businesses do
+		PlotBuilder.updateBuilding(entry.world, id, state.unitsOwned)
+	end
+
+	Handlers.pushSnapshot(player, entry)
+end
+
+--[[
 	"I selected a buy mode."
 
 	The server holds the selection because it prices the selected batch for every row. Pushing a
@@ -328,6 +364,7 @@ function Handlers.bind(): ()
 	Remotes.get(Remotes.toServer.SetBuyMode).OnServerEvent:Connect(onSetBuyMode)
 	Remotes.get(Remotes.toServer.HireManager).OnServerEvent:Connect(onHireManager)
 	Remotes.get(Remotes.toServer.BuyUpgrade).OnServerEvent:Connect(onBuyUpgrade)
+	Remotes.get(Remotes.toServer.PerformReset).OnServerEvent:Connect(onPerformReset)
 	Remotes.get(Remotes.toServer.SetPanelOpen).OnServerEvent:Connect(onSetPanelOpen)
 end
 
