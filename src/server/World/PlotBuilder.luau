@@ -187,6 +187,13 @@ function PlotBuilder.updateBuilding(plot: Plot, id: Types.BusinessId, unitsOwned
 		return
 	end
 
+	--[[
+		A business you do not own yet has nothing standing on the plot.
+
+		The panel still lists it with its price -- that is where the aiming happens -- but an
+		empty plot that fills in as the empire grows is the whole point of putting the row out
+		here, and ten identical boxes from the first second would throw that away.
+	]]
 	local config = World.buildings
 	local steps = 0
 	for _, threshold in config.growthThresholds do
@@ -194,9 +201,15 @@ function PlotBuilder.updateBuilding(plot: Plot, id: Types.BusinessId, unitsOwned
 			steps += 1
 		end
 	end
+
 	if steps == 0 then
+		box.Transparency = 1
+		box.CanCollide = false
 		return
 	end
+
+	box.Transparency = 0
+	box.CanCollide = true
 
 	local scale = config.growthStep ^ (steps - 1)
 	local size = config.baseSize * scale

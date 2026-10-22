@@ -319,7 +319,7 @@ end
 	Destroys itself when it finishes, so the caller has no cleanup to forget -- the leak this
 	avoids is the classic one in a game that pops a number on every cycle.
 ]]
-function Bubbly.popNumber(parent: Instance, text: string, origin: UDim2): ()
+function Bubbly.popNumber(parent: Instance, text: string, origin: UDim2, anchor: Vector2?): ()
 	local label = Bubbly.label("Pop", parent, {
 		text = text,
 		size = 32,
@@ -328,7 +328,12 @@ function Bubbly.popNumber(parent: Instance, text: string, origin: UDim2): ()
 	})
 	label.Size = UDim2.fromOffset(200, 40)
 	label.Position = origin
-	label.AnchorPoint = Vector2.new(0.5, 0.5)
+	-- Default centres on the origin; callers that want to sit flush against the end of a
+	-- number pass Vector2.new(0, 0.5) so the origin is the pop's left edge instead.
+	label.AnchorPoint = anchor or Vector2.new(0.5, 0.5)
+	label.TextXAlignment = if anchor and anchor.X == 0
+		then Enum.TextXAlignment.Left
+		else Enum.TextXAlignment.Center
 	label.ZIndex = 20
 
 	local info =

@@ -127,13 +127,14 @@ function Hud.popGain(self: Hud, amount: Types.BigNumber): ()
 		return
 	end
 
-	-- Near the start of the figure, for the same reason as the panel's: the pill's value label
-	-- is left-aligned and much wider than its text.
-	local origin = self.cashValue.AbsolutePosition - self.overlay.AbsolutePosition
+	-- Flush against the end of the figure, tracking its rendered width, same as the panel's.
+	local value = self.cashValue
+	local origin = value.AbsolutePosition - self.overlay.AbsolutePosition
 	Bubbly.popNumber(
 		self.overlay,
 		`+{Format.money(amount)}`,
-		UDim2.fromOffset(origin.X + 40, origin.Y)
+		UDim2.fromOffset(origin.X + value.TextBounds.X + 12, origin.Y + value.AbsoluteSize.Y / 2),
+		Vector2.new(0, 0.5)
 	)
 end
 

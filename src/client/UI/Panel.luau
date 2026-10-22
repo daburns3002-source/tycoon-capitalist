@@ -59,10 +59,14 @@ type Row = {
 	container: Frame,
 	units: TextLabel,
 	payout: TextLabel,
+	title: TextLabel,
 	milestone: TextLabel,
 	progressTrack: Frame,
 	progressFill: Frame,
 	tapHint: TextLabel,
+	countBadge: TextLabel,
+	timer: TextLabel,
+	chip: Frame,
 	fillTween: Tween?,
 	cycleToken: number,
 	buyButton: TextButton,
@@ -225,6 +229,23 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 	local chip = Bubbly.iconChip(collect, GLYPHS[id] or "⬤", Theme.colour.blue)
 	chip.Position = UDim2.fromOffset(14, 16)
 
+	--[[
+		The owned count, as a badge on the icon.
+
+		Straight from the source game, where every business icon carries its count in the corner
+		rather than in the body text. It is the number a player checks most often -- it is what
+		the next cycle-time milestone is measured against -- so it belongs on the thing their
+		eye already goes to.
+	]]
+	local countBadge = Bubbly.label("Count", chip, {
+		size = 15,
+		alignment = Enum.TextXAlignment.Center,
+		strokeThickness = Theme.metric.textStrokeSmall,
+	})
+	countBadge.Size = UDim2.fromOffset(Theme.metric.iconChip, 18)
+	countBadge.Position = UDim2.fromOffset(0, Theme.metric.iconChip - 17)
+	countBadge.ZIndex = 8
+
 	local title = Bubbly.label("Title", collect, {
 		text = config.displayName,
 		size = 24,
@@ -254,6 +275,22 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 	})
 	milestone.Size = UDim2.new(1, -220, 0, 18)
 	milestone.Position = UDim2.fromOffset(Theme.metric.iconChip + 26, 66)
+
+	--[[
+		Time left on the cycle, right-aligned, as the source game shows it.
+
+		Refreshed from snapshots rather than per frame. That is one a second while idle, which
+		is exact for the Oil Company's ten hours and meaningless for the Lemonade Stand's
+		0.6s -- and at 0.6s the bar is the readout anyway.
+	]]
+	local timer = Bubbly.label("Timer", collect, {
+		size = 16,
+		colour = Theme.colour.textDim,
+		alignment = Enum.TextXAlignment.Right,
+		strokeThickness = Theme.metric.textStrokeSmall,
+	})
+	timer.Size = UDim2.fromOffset(96, 22)
+	timer.Position = UDim2.new(1, -104, 0, 12)
 
 	local track = Instance.new("Frame")
 	track.Name = "ProgressTrack"
@@ -329,12 +366,16 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 
 	return {
 		container = container,
+		title = title,
 		units = units,
 		payout = payout,
 		milestone = milestone,
 		progressTrack = track,
 		progressFill = fill,
 		tapHint = tapHint,
+		countBadge = countBadge,
+		timer = timer,
+		chip = chip,
 		fillTween = nil,
 		cycleToken = 0,
 		buyButton = buyButton,
@@ -475,14 +516,14 @@ end
 	wherever the bar should already be, over the time that is actually left.
 ]]
 local function syncFill(row: Row, business: Types.BusinessSnapshot): ()
-	if not business.isCycling or business.cycleSeconds <= 0 then
+	if business.unitsOwned <= 0 or not business.isCycling or business.cycleSeconds <= 0 then
 		if row.fillTween then
 			row.fillTween:Cancel()
 			row.fillTween = nil
 		end
 		row.cycleToken = 0
 		row.progressFill.Size = UDim2.fromScale(0, 1)
-		row.tapHint.Visible = true
+		row.tapHint.Visible = business.unitsOwned > 0
 		return
 	end
 
@@ -533,14 +574,45 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 		row.isCycling = business.isCycling
 		syncFill(row, business)
 
-		row.units.Text = `x{Format.integer(business.unitsOwned)}`
-		row.payout.Text =
-			`{Format.money(business.payoutPerCycle)} / {Format.duration(business.cycleSeconds)}`
+		--[[
+			A business with no units is "locked": listed with its price, greyed, inert.
+
+			The source game does the same -- every business is visible from the first minute
+			with its cost on the button, which is most of why the early game pulls. It is not a
+			separate state on the server; zero units already earns nothing and runs no cycle.
+		]]
+		local owned = business.unitsOwned > 0
+
+		row.countBadge.Text = if owned then Format.integer(business.unitsOwned) else ""
+		row.units.Text = if owned then `x{Format.integer(business.unitsOwned)}` else "LOCKED"
+		row.units.TextTransparency = if owned then 0 else 0.25
+
+		-- A locked row quotes what *one* unit earns, read from the shared config. The snapshot's
+		-- payout is computed from units owned, which is zero here, so using it would advertise
+		-- every business as earning nothing -- the opposite of the point of listing them.
+		local config = Businesses.byId[business.id]
+		row.payout.Text = if owned
+			then `{Format.money(business.payoutPerCycle)} / {Format.duration(business.cycleSeconds)}`
+			else `{Format.money(config.revenuePerCycle)} per {Format.duration(
+				config.cycleSeconds
+			)}`
 
 		local milestone = business.nextMilestone
-		row.milestone.Text = if milestone
-			then `⚡ speed-up at {Format.integer(milestone)}`
+		row.milestone.Text = if not owned
+			then "tap BUY to start earning"
+			elseif milestone then `⚡ speed-up at {Format.integer(milestone)}`
 			else "⚡ fully upgraded"
+
+		-- Time left this cycle, or the cycle length when idle.
+		local remaining = math.max(business.cycleSeconds - business.cycleElapsed, 0)
+		row.timer.Text = if not owned
+			then ""
+			elseif business.isCycling then Format.duration(remaining)
+			else Format.duration(business.cycleSeconds)
+
+		row.chip.BackgroundTransparency = if owned then 0 else 0.55
+		row.title.TextTransparency = if owned then 0 else 0.25
+		row.progressTrack.Visible = owned
 
 		local count = business.affordableAtMode
 		row.buyLabel.Text = if snapshot.buyMode == "max"
@@ -553,8 +625,9 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 			then Theme.colour.green
 			else Theme.colour.panelDeep
 
-		row.container.BackgroundColor3 = if business.isCycling
-			then Theme.colour.rowActive
+		row.container.BackgroundColor3 = if not owned
+			then Theme.colour.panelDeep
+			elseif business.isCycling then Theme.colour.rowActive
 			else Theme.colour.row
 	end
 
@@ -577,15 +650,21 @@ function Panel.notifyCashGain(self: Panel, amount: Types.BigNumber): ()
 		return
 	end
 
-	-- Anchored near the start of the figure, not the middle of its box. The cash label is
-	-- left-aligned and far wider than its text, so centring on the label left the pop drifting
-	-- off to the right of the number it belongs to.
+	--[[
+		Sits flush against the end of the cash figure.
+
+		`TextBounds` is the width of the rendered text, not of its container, so this tracks the
+		number as it grows: $9 and $9.99M put the pop in different places, each time just past
+		the last digit. Anchoring to the label's box instead would leave the pop stranded far to
+		the right of a short number, and overlapping a long one.
+	]]
 	local label = self.cashLabel
 	local origin = label.AbsolutePosition - self.overlay.AbsolutePosition
 	Bubbly.popNumber(
 		self.overlay,
 		`+{Format.money(amount)}`,
-		UDim2.fromOffset(origin.X + 48, origin.Y + label.AbsoluteSize.Y - 4)
+		UDim2.fromOffset(origin.X + label.TextBounds.X + 14, origin.Y + label.AbsoluteSize.Y / 2),
+		Vector2.new(0, 0.5)
 	)
 end
 

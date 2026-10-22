@@ -29,14 +29,22 @@ type BusinessState = Types.BusinessState
 local PlotState = {}
 
 --[[
-	Businesses unlocked in Phase 2.
+	Every business the panel shows, in cost order.
 
-	The economy knows all ten; the plot exposes one. Keeping the gate here rather than trimming
-	the config means Phase 3 is a change to this list and nothing else.
+	All ten, as the source game does: the ones you cannot afford yet are still listed, greyed,
+	with their price on the buy button. Seeing the Oil Company sitting there at twenty-five
+	billion from the first minute is a large part of why the early game pulls -- hiding it until
+	it is affordable would remove the thing being aimed at.
+
+	A business with zero units earns nothing and runs no cycle; `Production.advance` and
+	`Revenue.perCycle` both already treat zero as zero, so "locked" needs no separate state.
 ]]
-local UNLOCKED: { Types.BusinessId } = { "LemonadeStand" }
+local LISTED: { Types.BusinessId } = {}
+for _, config in Businesses.list do
+	table.insert(LISTED, config.id)
+end
 
-PlotState.unlocked = UNLOCKED
+PlotState.unlocked = LISTED
 
 local function newBusinessState(): BusinessState
 	return {
@@ -56,7 +64,7 @@ end
 ]]
 function PlotState.new(userId: number): PlotState
 	local businesses: { [Types.BusinessId]: BusinessState } = {}
-	for _, id in UNLOCKED do
+	for _, id in LISTED do
 		businesses[id] = newBusinessState()
 	end
 
