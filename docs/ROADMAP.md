@@ -74,6 +74,10 @@ The panel becomes the whole source game.
 
 ## Phase 4 — UI pass, Steal an Egg style  **PLAYTEST**
 
+The visual foundation landed early, during Phase 2, because the grey-box UI read as a dashboard
+rather than a game and that was worth fixing before judging feel. `UI/Theme` holds the tokens and
+`UI/Bubbly` the primitives; what remains below is layout, motion and sound.
+
 The panel is where nearly all the screen time happens, so this phase matters more than it would
 in a game whose appeal was its world.
 

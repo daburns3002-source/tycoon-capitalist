@@ -35,6 +35,9 @@ export type BusinessConfig = {
 	cycleSeconds: number,
 	revenuePerCycle: BigNumber,
 	managerCost: BigNumber,
+	-- The source game names every manager after a pun or a pop-culture reference. Flavour, but
+	-- it is the flavour that makes hiring one feel like hiring someone.
+	managerName: string,
 }
 
 --[[
@@ -68,8 +71,169 @@ export type PlotState = {
 	allProfitMultiplier: number,
 	angelEffectiveness: number,
 	businesses: { [BusinessId]: BusinessState },
+	--[[
+		Cash upgrades bought this run, by id.
+
+		Lost on an angel reset, like everything else bought with cash. The multipliers on
+		`businesses` and `allProfitMultiplier` are derived from this set rather than stored
+		independently, so there is one source of truth and no way for them to drift apart.
+	]]
+	upgradesOwned: { [string]: boolean },
+	--[[
+		Angel upgrades bought, by id.
+
+		Unlike cash upgrades these survive a reset -- they are what the angels were spent on, and
+		the angels are not coming back. See Config/AngelUpgrades for the reasoning and the one
+		place the source material is ambiguous.
+	]]
+	angelUpgradesOwned: { [string]: boolean },
+}
+
+--[[
+	One cash upgrade.
+
+	`target` is a business id, "all" for every business, or "angel" for the Angel Investor
+	effectiveness line. For a profit upgrade `multiplier` is the factor (always 3 in the source
+	game); for an angel upgrade it is the amount added to effectiveness, so 0.01 is +1%.
+]]
+export type UpgradeConfig = {
+	id: string,
+	displayName: string,
+	target: string,
+	kind: "profit" | "angelEffectiveness",
+	multiplier: number,
+	cost: BigNumber,
+}
+
+--[[
+	One unlock: a named milestone earned by owning units, never bought.
+
+	`owner` is the business whose unit count gates it, or "Capitalist" for the ladder gated on
+	every business at once. `kind` is "speed" for the cycle-time halvings -- which `Economy.Cycle`
+	already applies, so those are display-only here -- or "profit" for a multiplier that is
+	genuinely applied. `target` is the business the multiplier lands on, which is not always the
+	owner: Newspaper Delivery's unlocks multiply other businesses.
+]]
+export type UnlockConfig = {
+	id: string,
+	owner: string,
+	goal: number,
+	displayName: string,
+	kind: "speed" | "profit",
+	target: string,
+	multiplier: number,
+}
+
+--[[
+	One angel upgrade: bought by sacrificing Angel Investors, permanent thereafter.
+
+	`kind` is "allProfit" (multiply every business by `amount`), "effectiveness" (add `amount`
+	to angel effectiveness, so 0.02 takes each angel from +2% to +4%), or "startingUnits" (grant
+	`amount` free units of `target` at the start of every run).
+]]
+export type AngelUpgradeConfig = {
+	id: string,
+	displayName: string,
+	cost: number,
+	kind: "allProfit" | "effectiveness" | "startingUnits",
+	target: string,
+	amount: number,
+}
+
+--[[ What the client is told about one angel upgrade. ]]
+export type AngelUpgradeSnapshot = {
+	id: string,
+	owned: boolean,
+	affordable: boolean,
+}
+
+--[[ What the client is told about one unlock: earned, and how close the next one is. ]]
+export type UnlockSnapshot = {
+	id: string,
+	earned: boolean,
+	progress: number,
+}
+
+--[[ What the client is told about one upgrade. ]]
+export type UpgradeSnapshot = {
+	id: string,
+	owned: boolean,
+	affordable: boolean,
 }
 
 export type DeviceTier = "Low" | "Medium" | "High"
+
+--[[
+	One business's payout, as sent to the client when a cycle completes.
+
+	Drives the number pop and the collect sound. The authoritative totals still arrive in the
+	snapshot -- this is presentation, and a client that ignored it would still see the right
+	cash.
+]]
+export type CyclePayment = {
+	id: BusinessId,
+	cycles: number,
+	amount: BigNumber,
+}
+
+export type BuyMode = "x1" | "x10" | "x100" | "max"
+
+--[[
+	What the client is told about one business.
+
+	BigNumbers cross the wire as their mantissa/exponent table, which replicates as a plain
+	table -- no custom serialisation needed and no precision lost. `nextCostFor` is the price of
+	the currently selected buy mode, computed server-side so the client never prices anything
+	itself.
+]]
+export type BusinessSnapshot = {
+	id: BusinessId,
+	unitsOwned: number,
+	hasManager: boolean,
+	cycleSeconds: number,
+	cycleElapsed: number,
+	isCycling: boolean,
+	--[[
+		Identifies *which* cycle is running, so the client can tell a continuing cycle from a
+		new one and avoid restarting its fill animation on every snapshot.
+
+		It is the server's own start timestamp and is only ever compared for equality -- never
+		subtracted, never shown. The server's clock means nothing on the client.
+
+		Zero when idle. This matters from Phase 3: a managed business keeps `isCycling` true
+		across back-to-back cycles, so a false-to-true transition is not enough to spot a new
+		one.
+	]]
+	cycleToken: number,
+	payoutPerCycle: BigNumber,
+	nextCostFor: BigNumber,
+	affordableAtMode: number,
+	nextMilestone: number?,
+}
+
+--[[
+	The whole panel's state, pushed by the server whenever something it shows changes.
+
+	The client renders this and interpolates progress bars locally for smoothness. It never
+	derives a value that matters from it.
+]]
+export type PlotSnapshot = {
+	cash: BigNumber,
+	lifetimeEarnings: BigNumber,
+	angels: number,
+	buyMode: BuyMode,
+	--[[
+		Angels gained by resetting right now, and the lifetime earnings the next whole angel
+		needs. Both computed server-side -- the client must never be the thing that decides how
+		much a reset is worth.
+	]]
+	pendingAngels: number,
+	nextAngelAt: BigNumber,
+	globalMilestones: number,
+	businesses: { BusinessSnapshot },
+	upgrades: { UpgradeSnapshot },
+	unlocks: { UnlockSnapshot },
+	angelUpgrades: { AngelUpgradeSnapshot },
+}
 
 return nil

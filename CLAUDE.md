@@ -23,11 +23,36 @@ design work — the source game has no movement, no items, no teams and no ranke
 
 ## Where we are
 
-Phase 1 complete: the number system and the economy core. `src/shared/Economy` holds BigNumber,
-Format, Cost, Cycle, Revenue and Angels; `src/shared/Config/Businesses.luau` holds the exact
-Earth table. All pure, all tested. Nothing is on screen yet, by design.
+The full AdVenture Capitalist loop is implemented and runs in Studio. Not yet persisted, not yet
+published, and only lightly playtested.
 
-Next: Phase 2, the board and the panel behind it. See `docs/ROADMAP.md`.
+- **Phase 1 — economy core.** `src/shared/Economy`: BigNumber, Format, Cost, Cycle, Revenue,
+  Angels. `src/shared/Config`: the exact Earth business table, 35 cash upgrades, 157 unlocks.
+  All pure, all tested.
+- **Phase 2 — the board and the panel.** Grey-box plot, server-authoritative plot state, a 10Hz
+  production tick, a panel with four tabs. Playtested once and judged to hold up.
+- **Phase 3 — content.** All ten businesses with locked rows, managers, cash upgrades, the
+  unlock ladder.
+- **Phase 4 — styling foundation**, landed early: `UI/Theme` and `UI/Bubbly` carry the Steal An
+  Egg look. Per-device layouts and sound are still ahead.
+- **Phase 6 — Angel Investors.** Reset flow with a two-tap confirm.
+
+The economy suite runs in Studio at **202 assertions**.
+
+- **Phase 5 — persistence.** Session-locked DataStore profiles, versioned schema, offline
+  earnings from the server clock, autosave and a shutdown write. The storage layer's *lock* is
+  tested against an in-memory fake; the DataStore itself has never run, because the place is
+  unpublished. See `docs/SETUP.md`.
+- **Phase 8 — social, started.** Angel upgrades give angels a sink, and a global leaderboard
+  ranks lifetime earnings on a board in the world.
+
+**Phase 4 is half done and paused.** `UI/Layout.luau` adapts the panel across three viewport
+bands and is wired up and followed on resize. `Config/Audio.luau` and `UI/Sfx.luau` exist and
+type-check, but **no cue is wired to anything yet** -- nothing plays. Picking that up means
+calling `Sfx.start()` from the client entry point and `Sfx.play(...)` at the collect, buy,
+manager, unlock, reset, tab and rejection sites.
+
+After that: publishing, without which persistence and the leaderboard cannot be verified at all.
 
 ## Commands
 
@@ -69,6 +94,12 @@ Known-good anchors to keep in the suite:
 | $1 septillion lifetime to angels | 4,743,416 |
 | 400 of every business, Oil cycle | exactly 9 s (36864 / 2^12) |
 | Lemonade Stand displayed 2nd price | $4.00 (base 4/1.07) |
+
+**Milestones at 25-400 are speed, not profit.** The source game's unlocks at 25/50/100/200/300/400
+are "Profit Speed Doubled" -- the cycle-time halvings `Economy.Cycle` already applies. Profit
+multipliers only start at 500 units. `Config/Unlocks.luau` lists the speed ones for display and
+marks them `kind = "speed"`; applying them as multipliers would double the game's pace twice over,
+and there is a test pinning that they are not.
 
 **The wiki is wrong about the Car Wash.** It states the second unit costs $829.92, which is
 728 × 1.14; the initial cost is 720, so the correct price is 720 × 1.14 = **$820.80**. Do not
@@ -126,6 +157,20 @@ renderer and a test harness, driven through Rojo and the Studio MCP server.
 - Underscore-prefixed names for intentionally unused arguments
 - No `wait()`, no `spawn()`, no `delay()` — use `task.*`
 - Every `:Connect` has a disconnect path; every instance created has a destroy path
+
+### A luau-lsp trap worth knowing
+
+String-literal unions (`BuyMode`, `DeviceTier`) lose their literalness in the pinned luau-lsp in
+two places:
+
+- **Narrowing an optional one widens it to `string`.** Both `if m == nil then return end` and
+  `if m then return m end` discard the type, so the value then fails every downstream check.
+- **A declared multi-return annotation is not applied to the inferred branches**, so a helper
+  typed `(BuyMode, boolean)` hands back a union of four widened strings.
+
+What does work: assigning a literal to a local with an explicit annotation, and a definite value
+plus a flag instead of an optional. `Handlers.onBuyUnits` and `Device.tier` are both written that
+way on purpose and say so in comments — the tidier spelling is the broken one.
 
 ## Workflow
 

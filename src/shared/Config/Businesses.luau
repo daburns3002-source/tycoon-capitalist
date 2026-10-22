@@ -44,6 +44,7 @@ local LIST: { BusinessConfig } = {
 		cycleSeconds = 0.6,
 		revenuePerCycle = p(1, 0),
 		managerCost = p(1, 3),
+		managerName = "Cabe Johnson",
 	},
 	{
 		id = "NewspaperDelivery",
@@ -54,6 +55,7 @@ local LIST: { BusinessConfig } = {
 		cycleSeconds = 3,
 		revenuePerCycle = p(6, 1),
 		managerCost = p(1.5, 4),
+		managerName = "Perry Black",
 	},
 	{
 		id = "CarWash",
@@ -64,6 +66,7 @@ local LIST: { BusinessConfig } = {
 		cycleSeconds = 6,
 		revenuePerCycle = p(5.4, 2),
 		managerCost = p(1, 5),
+		managerName = "W.W. Heisenbird",
 	},
 	{
 		id = "PizzaDelivery",
@@ -74,6 +77,7 @@ local LIST: { BusinessConfig } = {
 		cycleSeconds = 12,
 		revenuePerCycle = p(4.32, 3),
 		managerCost = p(5, 5),
+		managerName = "Mama Sean",
 	},
 	{
 		id = "DonutShop",
@@ -84,6 +88,7 @@ local LIST: { BusinessConfig } = {
 		cycleSeconds = 24,
 		revenuePerCycle = p(5.184, 4),
 		managerCost = p(1.2, 6),
+		managerName = "Jim Thorton",
 	},
 	{
 		id = "ShrimpBoat",
@@ -93,7 +98,8 @@ local LIST: { BusinessConfig } = {
 		coefficient = 1.11,
 		cycleSeconds = 96,
 		revenuePerCycle = p(6.2208, 5),
-		managerCost = p(1.5, 7),
+		managerCost = p(1, 7),
+		managerName = "Forest Trump",
 	},
 	{
 		id = "HockeyTeam",
@@ -103,7 +109,8 @@ local LIST: { BusinessConfig } = {
 		coefficient = 1.10,
 		cycleSeconds = 384,
 		revenuePerCycle = p(7.46496, 6),
-		managerCost = p(1, 8),
+		managerCost = p(1.11111111, 8),
+		managerName = "Dawn Cheri",
 	},
 	{
 		id = "MovieStudio",
@@ -113,7 +120,8 @@ local LIST: { BusinessConfig } = {
 		coefficient = 1.09,
 		cycleSeconds = 1536,
 		revenuePerCycle = p(8.957952, 7),
-		managerCost = p(5, 8),
+		managerCost = p(5.55555555, 8),
+		managerName = "Stefani Speilburger",
 	},
 	{
 		id = "Bank",
@@ -124,6 +132,7 @@ local LIST: { BusinessConfig } = {
 		cycleSeconds = 6144,
 		revenuePerCycle = p(1.07495424, 9),
 		managerCost = p(1, 10),
+		managerName = "The Dark Lord",
 	},
 	{
 		id = "OilCompany",
@@ -134,6 +143,7 @@ local LIST: { BusinessConfig } = {
 		cycleSeconds = 36864,
 		revenuePerCycle = p(2.9668737024, 10),
 		managerCost = p(1, 11),
+		managerName = "Derrick Plainview",
 	},
 }
 

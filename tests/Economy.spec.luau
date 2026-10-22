@@ -28,7 +28,17 @@ local Cost = require(Economy.Cost)
 local Cycle = require(Economy.Cycle)
 local Format = require(Economy.Format)
 local Revenue = require(Economy.Revenue)
+local ServerScriptService = game:GetService("ServerScriptService")
+local AngelUpgradeConfig = require(Shared.Config.AngelUpgrades)
+local FakeStore = require(ServerStorage.Tests.FakeStore)
+local Leaderboard = require(ServerScriptService.Server.Data.Leaderboard)
+local Offline = require(ServerScriptService.Server.Tick.Offline)
+local PlotState = require(ServerScriptService.Server.Plot.PlotState)
+local Profiles = require(ServerScriptService.Server.Data.Profiles)
+local Serialise = require(ServerScriptService.Server.Data.Serialise)
 local TestRunner = require(ServerStorage.Tests.TestRunner)
+local UnlockConfig = require(Shared.Config.Unlocks)
+local UpgradeConfig = require(Shared.Config.Upgrades)
 
 local Spec = {}
 
@@ -479,6 +489,475 @@ local function testConfigIntegrity(): (number, number)
 	return t:finish()
 end
 
+local function testUpgradesAndManagers(): (number, number)
+	local t = TestRunner.new("Upgrades")
+
+	local plot = PlotState.new(1)
+
+	-- A fresh plot owns nothing and manages nothing. The second half of that matters: a
+	-- manager must be a deliberate purchase, never granted.
+	t:equals("no upgrades at start", next(plot.upgradesOwned), nil)
+	t:equals("all-business multiplier starts at 1", plot.allProfitMultiplier, 1)
+	t:equals("angel effectiveness starts at 1", plot.angelEffectiveness, 1)
+
+	local unmanaged = 0
+	for _, state in plot.businesses do
+		if not state.hasManager then
+			unmanaged += 1
+		end
+	end
+	t:equals("no business starts with a manager", unmanaged, 10)
+
+	-- A per-business upgrade multiplies only its own business.
+	plot.upgradesOwned.LittleUmbrellas = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("lemonade x3", plot.businesses.LemonadeStand.profitMultiplier, 3)
+	t:equals("newspaper untouched", plot.businesses.NewspaperDelivery.profitMultiplier, 1)
+	t:equals("all-business untouched", plot.allProfitMultiplier, 1)
+
+	-- Tiers stack multiplicatively on the same business, as in the source game.
+	plot.upgradesOwned.NoveltyStraws = true
+	plot.upgradesOwned.ImportedIceCubes = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("three lemonade tiers is x27", plot.businesses.LemonadeStand.profitMultiplier, 27)
+
+	-- An all-business upgrade is separate from the per-business stack, not folded into it.
+	plot.upgradesOwned.Monopoly = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("all-business x3", plot.allProfitMultiplier, 3)
+	t:equals("lemonade still x27", plot.businesses.LemonadeStand.profitMultiplier, 27)
+
+	-- Angel upgrades add a percentage point each, they do not multiply.
+	plot.upgradesOwned.HolyMoola = true
+	plot.upgradesOwned.ImmaculateConsumption = true
+	PlotState.recomputeMultipliers(plot)
+	t:equalsApprox("two angel upgrades is +2%", plot.angelEffectiveness, 1.02, 1e-12)
+
+	-- Recomputing is derived, not incremental: dropping an upgrade must drop its multiplier.
+	-- This is what makes an angel reset safe to implement in Phase 6.
+	plot.upgradesOwned.NoveltyStraws = false
+	plot.upgradesOwned.ImportedIceCubes = false
+	PlotState.recomputeMultipliers(plot)
+	t:equals("removing two tiers returns to x3", plot.businesses.LemonadeStand.profitMultiplier, 3)
+
+	-- Every configured upgrade must point at something real.
+	local danglingTarget = nil
+	for _, config in UpgradeConfig.list do
+		local valid = config.target == "all"
+			or config.target == "angel"
+			or Businesses.byId[config.target] ~= nil
+		if not valid and danglingTarget == nil then
+			danglingTarget = `{config.id} -> {config.target}`
+		end
+	end
+	t:record("every upgrade targets a real business", danglingTarget == nil, danglingTarget)
+
+	return t:finish()
+end
+
+local function testUnlocks(): (number, number)
+	local t = TestRunner.new("Unlocks")
+
+	local plot = PlotState.new(1)
+
+	-- Nothing earned from one free stand.
+	t:equals("lowest count starts at 0", PlotState.lowestUnitCount(plot), 0)
+	t:equals("lemonade x1 earns nothing", plot.businesses.LemonadeStand.profitMultiplier, 1)
+
+	-- The speed marks are Economy.Cycle's job. Crossing 400 must NOT grant a profit
+	-- multiplier here, or every cycle would effectively be doubled twice over.
+	plot.businesses.LemonadeStand.unitsOwned = 400
+	PlotState.recomputeMultipliers(plot)
+	t:equals(
+		"400 units grants no profit multiplier",
+		plot.businesses.LemonadeStand.profitMultiplier,
+		1
+	)
+
+	-- 500 is where profit multipliers start. Lemonade is the generous one at x4.
+	plot.businesses.LemonadeStand.unitsOwned = 500
+	PlotState.recomputeMultipliers(plot)
+	t:equals("500 lemonade is x4", plot.businesses.LemonadeStand.profitMultiplier, 4)
+
+	-- They stack: 500 through 900 are x4 each, 1000 is x5.
+	plot.businesses.LemonadeStand.unitsOwned = 1000
+	PlotState.recomputeMultipliers(plot)
+	t:equals("1000 lemonade is 4^5 * 5", plot.businesses.LemonadeStand.profitMultiplier, 4 ^ 5 * 5)
+
+	-- Newspaper Delivery multiplies *other* businesses. 125 units is the first ad deal.
+	local fresh = PlotState.new(2)
+	fresh.businesses.NewspaperDelivery.unitsOwned = 125
+	PlotState.recomputeMultipliers(fresh)
+	t:equals("newspaper 125 gives lemonade x2", fresh.businesses.LemonadeStand.profitMultiplier, 2)
+	t:equals(
+		"newspaper does not boost itself there",
+		fresh.businesses.NewspaperDelivery.profitMultiplier,
+		1
+	)
+
+	-- The Capitalist ladder is gated on the weakest business, not a total.
+	local everywhere = PlotState.new(3)
+	for _, state in everywhere.businesses do
+		state.unitsOwned = 500
+	end
+	PlotState.recomputeMultipliers(everywhere)
+	t:equals("all at 500 gives the capitalist x2", everywhere.allProfitMultiplier, 2)
+
+	everywhere.businesses.OilCompany.unitsOwned = 499
+	PlotState.recomputeMultipliers(everywhere)
+	t:equals("one business short loses it", everywhere.allProfitMultiplier, 1)
+	t:equals("lowest count reflects the laggard", PlotState.lowestUnitCount(everywhere), 499)
+
+	-- Every unlock must point at a real business, and no speed unlock may sit past 400.
+	local badTarget, lateSpeed = nil, nil
+	for _, config in UnlockConfig.list do
+		local validTarget = config.target == "all" or Businesses.byId[config.target] ~= nil
+		if not validTarget and badTarget == nil then
+			badTarget = `{config.id} -> {config.target}`
+		end
+		if config.kind == "speed" and config.goal > 400 and lateSpeed == nil then
+			lateSpeed = `{config.id} at {config.goal}`
+		end
+	end
+	t:record("every unlock targets a real business", badTarget == nil, badTarget)
+	t:record("no speed unlock past 400", lateSpeed == nil, lateSpeed)
+
+	return t:finish()
+end
+
+local function testPersistence(): (number, number)
+	local t = TestRunner.new("Persistence")
+
+	-- A plot with everything on it: cash, units, a manager, an upgrade, angels.
+	local plot = PlotState.new(7)
+	plot.cash = BigNumber.fromParts(1.5, 30)
+	plot.lifetimeEarnings = BigNumber.fromParts(9.87, 42)
+	plot.earningsBeforeThisRun = BigNumber.fromParts(1, 20)
+	plot.angels = 4321
+	plot.angelsSacrificed = 17
+	plot.businesses.LemonadeStand.unitsOwned = 537
+	plot.businesses.Bank.unitsOwned = 12
+	plot.businesses.Bank.hasManager = true
+	plot.businesses.OilCompany.hasAccountant = true
+	plot.upgradesOwned.LittleUmbrellas = true
+	plot.upgradesOwned.Monopoly = true
+	PlotState.recomputeMultipliers(plot)
+
+	local stored = Serialise.save(plot)
+	local loaded, savedAt = Serialise.load(stored, function()
+		return PlotState.new(7)
+	end)
+	PlotState.recomputeMultipliers(loaded)
+
+	-- Money has to survive exactly. A save that rounds is a save that steals.
+	t:bigEquals("cash round-trips", loaded.cash, 1.5, 30)
+	t:bigEquals("lifetime round-trips", loaded.lifetimeEarnings, 9.87, 42)
+	t:bigEquals("previous-run earnings round-trip", loaded.earningsBeforeThisRun, 1, 20)
+	t:equals("angels round-trip", loaded.angels, 4321)
+	t:equals("sacrificed angels round-trip", loaded.angelsSacrificed, 17)
+	t:equals("units round-trip", loaded.businesses.LemonadeStand.unitsOwned, 537)
+	t:equals("managers round-trip", loaded.businesses.Bank.hasManager, true)
+	t:equals("accountants round-trip", loaded.businesses.OilCompany.hasAccountant, true)
+	t:equals("upgrades round-trip", loaded.upgradesOwned.Monopoly, true)
+	t:isTrue("savedAt is written", savedAt ~= nil and savedAt > 0)
+
+	-- Multipliers are derived, never stored, so they must come back identical from the inputs.
+	t:equals(
+		"derived multipliers match",
+		loaded.businesses.LemonadeStand.profitMultiplier,
+		plot.businesses.LemonadeStand.profitMultiplier
+	)
+	t:equals("derived all-multiplier matches", loaded.allProfitMultiplier, plot.allProfitMultiplier)
+
+	-- Cycle timestamps are an os.clock() reading and meaningless in another process.
+	t:equals("cycles are not restored", loaded.businesses.Bank.cycleStartedAt, nil)
+
+	-- A missing or junk profile yields a playable plot rather than an error.
+	local fresh = Serialise.load(nil, function()
+		return PlotState.new(8)
+	end)
+	t:equals("nil profile gives a fresh plot", fresh.businesses.LemonadeStand.unitsOwned, 1)
+	local junk = Serialise.load({ version = 1, businesses = "nonsense" }, function()
+		return PlotState.new(9)
+	end)
+	t:isTrue("malformed profile still loads", BigNumber.isZero(junk.cash))
+
+	return t:finish()
+end
+
+local function testOfflineEarnings(): (number, number)
+	local t = TestRunner.new("Offline")
+
+	local plot = PlotState.new(11)
+	plot.businesses.LemonadeStand.unitsOwned = 10
+	plot.businesses.LemonadeStand.hasManager = true
+
+	-- One Lemonade Stand cycle is 0.6s and ten units pay $10, so an hour is 6000 cycles.
+	local hour = Offline.settle(plot, 0, 3600)
+	t:equals("one business contributed", hour.businesses, 1)
+	t:equalsApprox("an hour pays 6000 cycles", BigNumber.toNumber(hour.earned), 6000 * 10, 1e-9)
+	t:equalsApprox("cash credited", BigNumber.toNumber(plot.cash), 6000 * 10, 1e-9)
+	-- Offline money is real money: it has to count toward angels like any other.
+	t:equalsApprox(
+		"lifetime credited too",
+		BigNumber.toNumber(plot.lifetimeEarnings),
+		6000 * 10,
+		1e-9
+	)
+
+	-- An unmanaged business earns nothing while away. That is the point of managers.
+	local unmanaged = PlotState.new(12)
+	unmanaged.businesses.LemonadeStand.unitsOwned = 100
+	local idle = Offline.settle(unmanaged, 0, 3600)
+	t:equals("unmanaged earns nothing", idle.businesses, 0)
+	t:isTrue("and credits nothing", BigNumber.isZero(unmanaged.cash))
+
+	-- Clamped at both ends.
+	local backwards = PlotState.new(13)
+	backwards.businesses.LemonadeStand.unitsOwned = 10
+	backwards.businesses.LemonadeStand.hasManager = true
+	local negative = Offline.settle(backwards, 5000, 1000)
+	t:equals("a backwards clock pays nothing", negative.seconds, 0)
+	t:isTrue("and credits nothing", BigNumber.isZero(backwards.cash))
+
+	local long = PlotState.new(14)
+	long.businesses.LemonadeStand.unitsOwned = 10
+	long.businesses.LemonadeStand.hasManager = true
+	local capped = Offline.settle(long, 0, 60 * 24 * 60 * 60)
+	t:equals("a 60-day absence is capped", capped.seconds, Offline.maxSeconds)
+
+	return t:finish()
+end
+
+local function testSessionLock(): (number, number)
+	local t = TestRunner.new("SessionLock")
+
+	local fake = FakeStore.new()
+	local clock = FakeStore.clock(10000)
+	local userId = 4242
+
+	local function asServer(jobId: string): ()
+		Profiles.configure({ store = fake.store, jobId = jobId, now = clock.now })
+	end
+
+	local function profileOf(): Serialise.SavedProfile
+		local plot = PlotState.new(userId)
+		plot.cash = BigNumber.fromParts(5, 12)
+		return Serialise.save(plot)
+	end
+
+	-- A new player on server A: nothing stored, lock taken, writing allowed.
+	asServer("A")
+	local first = Profiles.load(userId)
+	t:equals("new profile has no data", first.stored, nil)
+	t:equals("and may save", first.canSave, true)
+
+	t:equals("server A saves", Profiles.save(userId, profileOf(), false), true)
+	t:isTrue("data is stored", fake.data[`plot_{userId}`].data ~= nil)
+
+	-- Server B tries to take it while A's lock is fresh. It must be refused, and crucially it
+	-- must not get the data either -- a reader that is refused the lock but handed the profile
+	-- would be one bad branch away from writing it back.
+	asServer("B")
+	local blocked = Profiles.load(userId)
+	t:equals("server B is refused", blocked.canSave, false)
+	t:equals("and gets no data", blocked.stored, nil)
+	t:isTrue("the refusal says why", blocked.reason ~= nil)
+
+	-- B must not be able to write either, even if it tried anyway.
+	local writesBefore = fake.writes
+	t:equals("server B's save reports failure", Profiles.save(userId, profileOf(), false), false)
+	t:equals("and wrote nothing", fake.writes, writesBefore)
+	t:isTrue("its write was aborted", fake.aborts > 0)
+	t:equals("the lock is still A's", fake.data[`plot_{userId}`].lock.jobId, "A")
+
+	-- Age the lock past the timeout. A crashed server never releases one, so an abandoned lock
+	-- has to become takeable or the player is locked out forever.
+	clock.advance(Profiles.lockTimeout + 1)
+	local stolen = Profiles.load(userId)
+	t:equals("a stale lock can be taken", stolen.canSave, true)
+	t:isTrue("and the data comes with it", stolen.stored ~= nil)
+	t:equals("the lock is now B's", fake.data[`plot_{userId}`].lock.jobId, "B")
+
+	-- Now A has lost the lock. Its next autosave must abandon rather than win.
+	asServer("A")
+	local beforeStaleWrite = fake.writes
+	t:equals(
+		"the server that lost the lock reports failure",
+		Profiles.save(userId, profileOf(), false),
+		false
+	)
+	t:equals("and writes nothing", fake.writes, beforeStaleWrite)
+
+	-- B leaves cleanly: the lock is released so the next server need not wait it out.
+	asServer("B")
+	t:equals("leaving saves", Profiles.save(userId, profileOf(), true), true)
+	t:equals("and releases the lock", fake.data[`plot_{userId}`].lock, nil)
+
+	asServer("C")
+	local afterRelease = Profiles.load(userId)
+	t:equals("the next server loads immediately", afterRelease.canSave, true)
+	t:isTrue("with the data intact", afterRelease.stored ~= nil)
+
+	-- A round trip through the store, to prove the lock work did not cost the payload.
+	local restored = Serialise.load(afterRelease.stored, function()
+		return PlotState.new(userId)
+	end)
+	t:bigEquals("cash survived the store", restored.cash, 5, 12)
+
+	Profiles.configure(nil)
+	return t:finish()
+end
+
+local function testAngelUpgrades(): (number, number)
+	local t = TestRunner.new("AngelUpgrades")
+
+	local plot = PlotState.new(21)
+	plot.angels = 150000
+
+	-- Spending costs the angels *and* their bonus. That is the trade the whole layer rests on.
+	local before = Revenue.angelMultiplier(plot.angels, plot.angelEffectiveness)
+	t:equals("sacrifice succeeds when affordable", PlotState.trySacrifice(plot, 10000), true)
+	t:equals("angels are spent", plot.angels, 140000)
+	t:equals("and recorded as sacrificed", plot.angelsSacrificed, 10000)
+	t:isTrue("the profit bonus drops", Revenue.angelMultiplier(plot.angels, 1) < before)
+
+	t:equals("cannot overspend", PlotState.trySacrifice(plot, 999999999), false)
+	t:equals("and nothing changed", plot.angels, 140000)
+
+	-- All-profit angel upgrades stack with cash ones rather than replacing them.
+	plot.angelUpgradesOwned.AngelSacrifice = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("angel all-profit applies", plot.allProfitMultiplier, 3)
+
+	plot.upgradesOwned.Monopoly = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("and stacks with the cash one", plot.allProfitMultiplier, 9)
+
+	-- Effectiveness is additive: +2% takes each angel from 2% to 4%.
+	plot.angelUpgradesOwned.AngelicMutiny = true
+	PlotState.recomputeMultipliers(plot)
+	t:equalsApprox("effectiveness rises", plot.angelEffectiveness, 1.02, 1e-12)
+	t:equalsApprox(
+		"50 angels now give more than x2",
+		Revenue.angelMultiplier(50, plot.angelEffectiveness),
+		1 + 50 * 0.02 * 1.02,
+		1e-12
+	)
+
+	-- Starting-units upgrades change what a run begins with.
+	local head = PlotState.new(22)
+	t:equals("a plain run starts with one stand", PlotState.startingUnits(head, "LemonadeStand"), 1)
+	t:equals("and nothing else", PlotState.startingUnits(head, "CarWash"), 0)
+
+	head.angelUpgradesOwned.CarWashSwap = true
+	head.angelUpgradesOwned.CarWashSurge = true
+	t:equals("swap and surge stack", PlotState.startingUnits(head, "CarWash"), 60)
+
+	-- A reset keeps the angel upgrades and starts the run from what they grant.
+	head.lifetimeEarnings = BigNumber.fromParts(1, 15)
+	head.businesses.LemonadeStand.unitsOwned = 400
+	head.businesses.CarWash.unitsOwned = 7
+	head.businesses.Bank.hasManager = true
+	head.upgradesOwned.LittleUmbrellas = true
+	PlotState.reset(head)
+
+	t:equals("angel upgrades survive the reset", head.angelUpgradesOwned.CarWashSwap, true)
+	t:equals("cash upgrades do not", next(head.upgradesOwned), nil)
+	t:equals("managers do not", head.businesses.Bank.hasManager, false)
+	t:equals("the run starts from the head start", head.businesses.CarWash.unitsOwned, 60)
+	t:equals("and the free stand is still there", head.businesses.LemonadeStand.unitsOwned, 1)
+
+	-- Every angel upgrade must point at something real.
+	local bad = nil
+	for _, config in AngelUpgradeConfig.list do
+		local valid = config.target == "all"
+			or config.target == "angel"
+			or Businesses.byId[config.target] ~= nil
+		if not valid and bad == nil then
+			bad = `{config.id} -> {config.target}`
+		end
+	end
+	t:record("every angel upgrade targets something real", bad == nil, bad)
+
+	return t:finish()
+end
+
+local function testLeaderboard(): (number, number)
+	local t = TestRunner.new("Leaderboard")
+
+	--[[
+		The whole trick is ranking by the logarithm. An OrderedDataStore sorts a plain integer
+		and this game's earnings reach 1e306, so the stored key is log10 scaled up. log10 is
+		strictly increasing, so the ranking is exactly the ranking by earnings -- the test that
+		matters is that ordering is preserved across the entire range.
+	]]
+	local samples = {
+		BigNumber.zero,
+		BigNumber.fromNumber(1),
+		BigNumber.fromNumber(4),
+		BigNumber.fromNumber(1000),
+		BigNumber.fromParts(4.4, 10),
+		BigNumber.fromParts(1, 15),
+		BigNumber.fromParts(9.99, 15),
+		BigNumber.fromParts(1, 100),
+		BigNumber.fromParts(1, 306),
+	}
+
+	local brokenAt = nil
+	for index = 2, #samples do
+		local lower = Leaderboard.encode(samples[index - 1])
+		local higher = Leaderboard.encode(samples[index])
+		if higher <= lower and brokenAt == nil then
+			brokenAt = `sample {index}: {lower} then {higher}`
+		end
+	end
+	t:record("encoding preserves order across 1 to 1e306", brokenAt == nil, brokenAt)
+
+	t:equals("zero scores zero", Leaderboard.encode(BigNumber.zero), 0)
+	t:isTrue("one dollar outranks nothing", Leaderboard.encode(BigNumber.fromNumber(1)) > 0)
+	t:isTrue("1e306 fits in an integer", Leaderboard.encode(BigNumber.fromParts(1, 306)) < 2 ^ 53)
+
+	-- A negative balance cannot happen, but it must not poison the store if it ever did.
+	t:equals(
+		"a negative value scores zero",
+		Leaderboard.encode(BigNumber.negate(BigNumber.fromNumber(500))),
+		0
+	)
+
+	-- Decoding is exact enough to display: within the stored resolution.
+	local original = BigNumber.fromParts(3.7, 42)
+	local roundTrip = Leaderboard.decode(Leaderboard.encode(original))
+	t:equals("decode keeps the exponent", roundTrip.exponent, 42)
+	t:equalsApprox("and the mantissa", roundTrip.mantissa, 3.7, 1e-5)
+
+	-- Two players a factor of two apart must never tie.
+	local a = Leaderboard.encode(BigNumber.fromParts(1, 20))
+	local b = Leaderboard.encode(BigNumber.fromParts(2, 20))
+	t:isTrue("a factor of two is clearly separated", b > a)
+
+	-- Publishing against a fake ordered store.
+	local written: { [string]: number } = {}
+	Leaderboard.configure({
+		SetAsync = function(_self: any, key: string, value: number)
+			written[key] = value
+		end,
+		GetSortedAsync = function()
+			return nil
+		end,
+	})
+
+	t:equals("publish succeeds", Leaderboard.publish(99, BigNumber.fromParts(5, 25)), true)
+	t:equals(
+		"and writes the encoded score",
+		written.player_99,
+		Leaderboard.encode(BigNumber.fromParts(5, 25))
+	)
+
+	Leaderboard.configure(nil)
+	return t:finish()
+end
+
 function Spec.run(): boolean
 	print("[economy] running suite")
 
@@ -490,6 +969,13 @@ function Spec.run(): boolean
 		testAngels,
 		testFormat,
 		testConfigIntegrity,
+		testUpgradesAndManagers,
+		testUnlocks,
+		testPersistence,
+		testOfflineEarnings,
+		testSessionLock,
+		testAngelUpgrades,
+		testLeaderboard,
 	}
 
 	local passed, failed = 0, 0
