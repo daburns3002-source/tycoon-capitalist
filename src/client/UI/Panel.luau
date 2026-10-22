@@ -566,6 +566,30 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 end
 
 --[[
+	A tick's total earnings, popped off the cash figure.
+
+	The per-row pop says which business paid; this one says the balance moved. Called once per
+	server tick with the sum, rather than once per business, so ten businesses paying together
+	in Phase 3 produce one legible number instead of ten overlapping ones.
+]]
+function Panel.notifyCashGain(self: Panel, amount: Types.BigNumber): ()
+	if not self.isOpen then
+		return
+	end
+
+	-- Anchored near the start of the figure, not the middle of its box. The cash label is
+	-- left-aligned and far wider than its text, so centring on the label left the pop drifting
+	-- off to the right of the number it belongs to.
+	local label = self.cashLabel
+	local origin = label.AbsolutePosition - self.overlay.AbsolutePosition
+	Bubbly.popNumber(
+		self.overlay,
+		`+{Format.money(amount)}`,
+		UDim2.fromOffset(origin.X + 48, origin.Y + label.AbsoluteSize.Y - 4)
+	)
+end
+
+--[[
 	A cycle paid out. Pops the amount above the row that earned it.
 
 	Cosmetic and self-cleaning: the pop destroys itself when the tween finishes.

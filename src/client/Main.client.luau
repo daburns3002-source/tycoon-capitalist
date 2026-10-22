@@ -11,6 +11,7 @@ local ContextActionService = game:GetService("ContextActionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local BigNumber = require(Shared.Economy.BigNumber)
 local Remotes = require(Shared.Net.Remotes)
 local Types = require(Shared.Types)
 
@@ -40,8 +41,18 @@ local function main(): ()
 		connections,
 		Remotes.get(Remotes.toClient.CyclePaid).OnClientEvent
 			:Connect(function(payments: { Types.CyclePayment })
+				-- One pop per business says which one paid; the summed pop on the balance says
+				-- how much the player is now up. Summed rather than popped per payment so a
+				-- Phase 3 tick with ten businesses does not stack ten numbers on the total.
+				local total = BigNumber.zero
 				for _, payment in payments do
 					panel:notifyPaid(payment.id, payment.amount)
+					total = BigNumber.add(total, payment.amount)
+				end
+
+				if not BigNumber.isZero(total) then
+					panel:notifyCashGain(total)
+					hud:popGain(total)
 				end
 			end)
 	)

@@ -26,6 +26,7 @@ Hud.__index = Hud
 export type Hud = typeof(setmetatable(
 	{} :: {
 		gui: ScreenGui,
+		overlay: Frame,
 		cashValue: TextLabel,
 		lifetimeValue: TextLabel,
 		hint: Frame,
@@ -70,6 +71,21 @@ function Hud.new(): Hud
 	lifetimeValue.TextSize = 24
 	lifetimeValue.Text = "$0"
 
+	--[[
+		Pops go here, never into `stats`.
+
+		`stats` has a UIListLayout, and a UIListLayout counts every GuiObject child as an item --
+		so a rising "+$1" parented there would shove the cash and lifetime pills around for the
+		half-second it exists. Exactly the bug that was just fixed in the panel; the overlay is
+		how it stays fixed.
+	]]
+	local overlay = Instance.new("Frame")
+	overlay.Name = "Overlay"
+	overlay.BackgroundTransparency = 1
+	overlay.Size = UDim2.fromScale(1, 1)
+	overlay.ZIndex = 50
+	overlay.Parent = gui
+
 	-- The hint is a sticker rather than bare text, so it reads as part of the same UI.
 	local hint = Bubbly.panel("Hint", gui, Theme.colour.panelDeep)
 	hint.AnchorPoint = Vector2.new(0.5, 1)
@@ -87,6 +103,7 @@ function Hud.new(): Hud
 
 	return setmetatable({
 		gui = gui,
+		overlay = overlay,
 		cashValue = cashValue,
 		lifetimeValue = lifetimeValue,
 		hint = hint,
@@ -97,6 +114,27 @@ end
 function Hud.setSnapshot(self: Hud, snapshot: Types.PlotSnapshot): ()
 	self.cashValue.Text = Format.money(snapshot.cash)
 	self.lifetimeValue.Text = Format.money(snapshot.lifetimeEarnings)
+end
+
+--[[
+	Pop a rising "+$" off the cash pill.
+
+	Matters most from Phase 3, when managers earn while the player is walking around with the
+	panel closed and this is the only thing telling them it is working.
+]]
+function Hud.popGain(self: Hud, amount: Types.BigNumber): ()
+	if not self.gui.Enabled then
+		return
+	end
+
+	-- Near the start of the figure, for the same reason as the panel's: the pill's value label
+	-- is left-aligned and much wider than its text.
+	local origin = self.cashValue.AbsolutePosition - self.overlay.AbsolutePosition
+	Bubbly.popNumber(
+		self.overlay,
+		`+{Format.money(amount)}`,
+		UDim2.fromOffset(origin.X + 40, origin.Y)
+	)
 end
 
 --[[
