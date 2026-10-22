@@ -54,6 +54,9 @@ local function businessSnapshot(
 		cycleSeconds = PlotState.cycleSeconds(plot, id),
 		cycleElapsed = Production.cycleElapsed(plot, id, now),
 		isCycling = state.cycleStartedAt ~= nil,
+		-- Compared for equality only, so the client can tell a continuing cycle from a new one.
+		-- The server's clock is meaningless over there; its *changes* are not.
+		cycleToken = state.cycleStartedAt or 0,
 		payoutPerCycle = PlotState.payout(plot, id),
 		nextCostFor = Cost.bulkCost(config, state.unitsOwned, pricedQuantity),
 		affordableAtMode = quantity,

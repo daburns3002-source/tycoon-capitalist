@@ -102,6 +102,18 @@ export type BusinessSnapshot = {
 	cycleSeconds: number,
 	cycleElapsed: number,
 	isCycling: boolean,
+	--[[
+		Identifies *which* cycle is running, so the client can tell a continuing cycle from a
+		new one and avoid restarting its fill animation on every snapshot.
+
+		It is the server's own start timestamp and is only ever compared for equality -- never
+		subtracted, never shown. The server's clock means nothing on the client.
+
+		Zero when idle. This matters from Phase 3: a managed business keeps `isCycling` true
+		across back-to-back cycles, so a false-to-true transition is not enough to spot a new
+		one.
+	]]
+	cycleToken: number,
 	payoutPerCycle: BigNumber,
 	nextCostFor: BigNumber,
 	affordableAtMode: number,

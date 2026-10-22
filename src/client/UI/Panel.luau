@@ -18,6 +18,7 @@
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local BigNumber = require(Shared.Economy.BigNumber)
@@ -62,6 +63,8 @@ type Row = {
 	progressTrack: Frame,
 	progressFill: Frame,
 	tapHint: TextLabel,
+	fillTween: Tween?,
+	cycleToken: number,
 	buyButton: TextButton,
 	buyLabel: TextLabel,
 	buyPrice: TextLabel,
@@ -79,6 +82,7 @@ export type Panel = typeof(setmetatable(
 		lifetimeLabel: TextLabel,
 		angelLabel: TextLabel,
 		rowHolder: ScrollingFrame,
+		overlay: Frame,
 		modeButtons: { [Types.BuyMode]: TextButton },
 		rows: { [Types.BusinessId]: Row },
 		buyMode: Types.BuyMode,
@@ -331,6 +335,8 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 		progressTrack = track,
 		progressFill = fill,
 		tapHint = tapHint,
+		fillTween = nil,
+		cycleToken = 0,
 		buyButton = buyButton,
 		buyLabel = buyLabel,
 		buyPrice = buyPrice,
@@ -390,6 +396,7 @@ function Panel.new(): Panel
 		lifetimeLabel = nil :: any,
 		angelLabel = nil :: any,
 		rowHolder = nil :: any,
+		overlay = nil :: any,
 		modeButtons = {},
 		rows = {},
 		buyMode = "x1" :: Types.BuyMode,
@@ -418,6 +425,22 @@ function Panel.new(): Panel
 	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	rowLayout.Parent = holder
 
+	--[[
+		Pops live here, not in the surface.
+
+		The surface has a UIListLayout, and a UIListLayout treats every GuiObject child as an
+		item -- so a "+$1" parented there became a row of its own and shoved the header, the
+		mode bar and every business down for the half-second it existed. The overlay sits over
+		the surface with no layout on it and nothing but pops inside.
+	]]
+	local overlay = Instance.new("Frame")
+	overlay.Name = "Overlay"
+	overlay.BackgroundTransparency = 1
+	overlay.Size = UDim2.fromScale(1, 1)
+	overlay.ZIndex = 50
+	overlay.Parent = backdrop
+	self.overlay = overlay
+
 	-- Paint only. The server already starts every plot on x1, so there is nothing to tell it.
 	highlightBuyMode(self, "x1")
 	return self
@@ -433,6 +456,60 @@ end
 function Panel.setBuyMode(self: Panel, mode: Types.BuyMode): ()
 	highlightBuyMode(self, mode)
 	Remotes.get(Remotes.toServer.SetBuyMode):FireServer(mode)
+end
+
+--[[
+	Point the progress fill at the end of its cycle and let the engine carry it there.
+
+	Driving the width from Luau every frame looked steppy, and no amount of frame rate fixed
+	it: the track is ~536px and the first Lemonade Stand's cycle is 0.6 seconds, so the edge
+	travels about 900px per second. At a perfect 60fps that is still a 15px jump per frame, and
+	a fast-moving hard edge sampled that coarsely reads as chop. The world looked fine next to
+	it because nothing in the world moves that fast across the screen.
+
+	A tween hands the interpolation to the engine, which advances it on the render thread with
+	whatever precision the frame rate allows, and costs no Luau at all per frame.
+
+	Restarts only when the cycle identity changes, so the ten snapshots a second that arrive
+	during normal play do not keep resetting the animation. Rejoining mid-cycle tweens from
+	wherever the bar should already be, over the time that is actually left.
+]]
+local function syncFill(row: Row, business: Types.BusinessSnapshot): ()
+	if not business.isCycling or business.cycleSeconds <= 0 then
+		if row.fillTween then
+			row.fillTween:Cancel()
+			row.fillTween = nil
+		end
+		row.cycleToken = 0
+		row.progressFill.Size = UDim2.fromScale(0, 1)
+		row.tapHint.Visible = true
+		return
+	end
+
+	row.tapHint.Visible = false
+
+	-- Same cycle still running: leave the tween alone.
+	if row.cycleToken == business.cycleToken and row.fillTween ~= nil then
+		return
+	end
+
+	if row.fillTween then
+		row.fillTween:Cancel()
+	end
+	row.cycleToken = business.cycleToken
+
+	local progress = math.clamp(business.cycleElapsed / business.cycleSeconds, 0, 1)
+	local remaining = math.max(business.cycleSeconds - business.cycleElapsed, 0.01)
+
+	row.progressFill.Size = UDim2.fromScale(progress, 1)
+
+	local tween = TweenService:Create(
+		row.progressFill,
+		TweenInfo.new(remaining, Enum.EasingStyle.Linear),
+		{ Size = UDim2.fromScale(1, 1) }
+	)
+	row.fillTween = tween
+	tween:Play()
 end
 
 --[[ Apply a server snapshot. The only place panel numbers are set. ]]
@@ -454,6 +531,7 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 		row.cycleElapsed = business.cycleElapsed
 		row.receivedAt = received
 		row.isCycling = business.isCycling
+		syncFill(row, business)
 
 		row.units.Text = `x{Format.integer(business.unitsOwned)}`
 		row.payout.Text =
@@ -505,32 +583,13 @@ function Panel.notifyPaid(self: Panel, id: Types.BusinessId, amount: Types.BigNu
 	-- cycle register.
 	Bubbly.flash(row.progressTrack, Theme.colour.track, Theme.colour.green)
 
+	-- Positioned against the overlay, which no layout manages, so this cannot move anything.
+	local anchorY = row.container.AbsolutePosition.Y - self.overlay.AbsolutePosition.Y
 	Bubbly.popNumber(
-		self.surface,
+		self.overlay,
 		`+{Format.money(amount)}`,
-		UDim2.new(0.5, 0, 0, row.container.AbsolutePosition.Y - self.surface.AbsolutePosition.Y)
+		UDim2.new(0.5, 0, 0, anchorY + row.container.AbsoluteSize.Y / 2)
 	)
-end
-
---[[
-	Advance the progress bars between snapshots.
-
-	Cosmetic only: the server decides when a cycle pays. Interpolating here is what lets the
-	server push a snapshot ten times a second instead of every frame.
-]]
-function Panel.step(self: Panel, now: number): ()
-	for _, row in self.rows do
-		if not row.isCycling or row.cycleSeconds <= 0 then
-			row.progressFill.Size = UDim2.fromScale(0, 1)
-			row.tapHint.Visible = true
-			continue
-		end
-
-		row.tapHint.Visible = false
-		local elapsed = row.cycleElapsed + (now - row.receivedAt)
-		local fraction = math.clamp(elapsed / row.cycleSeconds, 0, 1)
-		row.progressFill.Size = UDim2.fromScale(fraction, 1)
-	end
 end
 
 function Panel.open(self: Panel): ()
@@ -563,6 +622,11 @@ end
 function Panel.destroy(self: Panel): ()
 	for _, connection in self.connections do
 		connection:Disconnect()
+	end
+	for _, row in self.rows do
+		if row.fillTween then
+			row.fillTween:Cancel()
+		end
 	end
 	table.clear(self.connections)
 	table.clear(self.rows)

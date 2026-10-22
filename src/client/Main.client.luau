@@ -9,7 +9,6 @@
 
 local ContextActionService = game:GetService("ContextActionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Remotes = require(Shared.Net.Remotes)
@@ -77,27 +76,6 @@ local function main(): ()
 		panel:close()
 		return Enum.ContextActionResult.Sink
 	end, false, Enum.KeyCode.Escape, Enum.KeyCode.ButtonB)
-
-	--[[
-		Drive the progress bars, every frame.
-
-		This used to be throttled to the device tier's HUD rate -- 30/sec on desktop, 10 on a
-		phone -- which was premature optimisation and visibly steppy. The work is one UDim2
-		assignment per visible business row, at most ten of them, and only while the panel is
-		open. That is nothing next to rendering the frame it rides on, and a progress bar is the
-		one thing in this UI whose entire job is to look smooth.
-
-		Device tiering still governs what actually costs frames: shadows, particles, draw
-		distance and building detail.
-	]]
-	table.insert(
-		connections,
-		RunService.RenderStepped:Connect(function()
-			if panel.isOpen then
-				panel:step(os.clock())
-			end
-		end)
-	)
 
 	table.insert(
 		connections,

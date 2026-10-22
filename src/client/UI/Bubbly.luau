@@ -312,6 +312,10 @@ end
 --[[
 	A number that flies up and fades, for a collected payout.
 
+	**Parent this to a frame with no layout on it.** A UIListLayout or UIGridLayout counts every
+	GuiObject child as an item, so a pop parented into a laid-out container becomes a row and
+	shoves everything else down for the half-second it exists. Callers pass a dedicated overlay.
+
 	Destroys itself when it finishes, so the caller has no cleanup to forget -- the leak this
 	avoids is the classic one in a game that pops a number on every cycle.
 ]]
