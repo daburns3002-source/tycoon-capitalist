@@ -80,6 +80,23 @@ local function reject(player: Player, intent: string, reason: string): ()
 	Remotes.get(Remotes.toClient.IntentRejected):FireClient(player, intent, reason)
 end
 
+--[[
+	Tell a joining player what their managers earned while away.
+
+	Cleared after sending so a respawn does not replay it -- the money was credited once, and
+	showing the banner again would read as earning it twice.
+]]
+function Handlers.pushWelcomeBack(player: Player, entry: PlotService.Entry): ()
+	local offline = entry.offline
+	if offline == nil then
+		return
+	end
+	entry.offline = nil
+
+	Remotes.get(Remotes.toClient.WelcomeBack)
+		:FireClient(player, offline.seconds, offline.earned, offline.businesses)
+end
+
 function Handlers.pushSnapshot(player: Player, entry: PlotService.Entry): ()
 	Remotes.get(Remotes.toClient.PlotSnapshot):FireClient(player, Snapshot.build(entry, os.clock()))
 end

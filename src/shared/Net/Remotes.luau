@@ -69,6 +69,14 @@ local TO_CLIENT: { [string]: string } = {
 	-- A cycle paid out. Drives the number pop and the collect sound; the authoritative totals
 	-- still arrive in the snapshot.
 	CyclePaid = "CyclePaid",
+	--[[
+		"Your managers earned this while you were away."
+
+		Payload: seconds (number), amount (BigNumber), businesses (number). Sent once on join,
+		and only when something was actually earned -- a welcome-back panel showing zero is
+		worse than no panel.
+	]]
+	WelcomeBack = "WelcomeBack",
 	-- A rejected intent, with a reason, so the UI can say why rather than silently doing
 	-- nothing. Payload: intent (string), reason (string).
 	IntentRejected = "IntentRejected",

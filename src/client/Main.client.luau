@@ -19,12 +19,14 @@ local BoardInteraction = require(script.Parent.World.BoardInteraction)
 local Device = require(script.Parent.Device)
 local Hud = require(script.Parent.UI.Hud)
 local Panel = require(script.Parent.UI.Panel)
+local WelcomeBack = require(script.Parent.UI.WelcomeBack)
 
 local CLOSE_ACTION = "ClosePanel"
 
 local function main(): ()
 	local hud = Hud.new()
 	local panel = Panel.new()
+	local welcome = WelcomeBack.new()
 
 	local connections: { RBXScriptConnection } = {}
 
@@ -54,6 +56,14 @@ local function main(): ()
 					panel:notifyCashGain(total)
 					hud:popGain(total)
 				end
+			end)
+	)
+
+	table.insert(
+		connections,
+		Remotes.get(Remotes.toClient.WelcomeBack).OnClientEvent
+			:Connect(function(seconds: number, earned: Types.BigNumber, businesses: number)
+				welcome:show(seconds, earned, businesses)
 			end)
 	)
 
@@ -99,6 +109,7 @@ local function main(): ()
 				connection:Disconnect()
 			end
 			ContextActionService:UnbindAction(CLOSE_ACTION)
+			welcome:destroy()
 			panel:destroy()
 			hud:destroy()
 		end)

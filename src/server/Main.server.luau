@@ -16,6 +16,7 @@ local Remotes = require(Shared.Net.Remotes)
 local Handlers = require(script.Parent.Net.Handlers)
 local PlotService = require(script.Parent.Plot.PlotService)
 local Production = require(script.Parent.Tick.Production)
+local Profiles = require(script.Parent.Data.Profiles)
 
 --[[
 	Tick rate for settling cycles.
@@ -36,8 +37,24 @@ local TICK_INTERVAL = 0.1
 ]]
 local IDLE_SNAPSHOT_INTERVAL = 1
 
+--[[
+	How often a live session is written back.
+
+	A crash, a server shutdown Roblox does not give us time to handle, or a player whose client
+	dies without a clean leave all lose everything since the last write. Sixty seconds bounds
+	that at a minute of progress, well inside the DataStore request budget for any plausible
+	server population.
+]]
+local AUTOSAVE_INTERVAL = 60
+
 local function onPlayerAdded(player: Player): ()
+	-- Yields: reads the profile, takes the lock, settles the absence.
 	local entry = PlotService.load(player)
+	if player.Parent == nil then
+		-- Left while the profile was loading. Release the lock we just took.
+		PlotService.unload(player)
+		return
+	end
 
 	local function onCharacterAdded(): ()
 		PlotService.teleportToPlot(player, entry)
@@ -50,13 +67,25 @@ local function onPlayerAdded(player: Player): ()
 	end
 
 	Handlers.pushSnapshot(player, entry)
+	Handlers.pushWelcomeBack(player, entry)
 end
 
 local function main(): ()
 	Remotes.createAll()
 	Handlers.bind()
 
-	Players.PlayerAdded:Connect(onPlayerAdded)
+	if not Profiles.isAvailable() then
+		warn("[Tycoon Capitalist] DataStores unavailable -- nothing will be saved this session.")
+		warn(
+			"[Tycoon Capitalist] In Studio: Game Settings > Security > Enable Studio Access to API Services."
+		)
+	end
+
+	Players.PlayerAdded:Connect(function(player: Player)
+		-- Spawned because PlotService.load yields on the DataStore, and blocking PlayerAdded
+		-- would stall every other player joining behind this one.
+		task.spawn(onPlayerAdded, player)
+	end)
 	Players.PlayerRemoving:Connect(function(player: Player)
 		PlotService.unload(player)
 	end)
@@ -65,6 +94,33 @@ local function main(): ()
 	for _, player in Players:GetPlayers() do
 		task.spawn(onPlayerAdded, player)
 	end
+
+	--[[
+		Autosave.
+
+		Separate from the production tick so a slow DataStore call can never delay a payout, and
+		spread across players rather than written in one burst.
+	]]
+	task.spawn(function()
+		while true do
+			task.wait(AUTOSAVE_INTERVAL)
+			for userId, entry in PlotService.all() do
+				PlotService.save(userId, entry, false)
+			end
+		end
+	end)
+
+	--[[
+		Last write before the server goes down.
+
+		Roblox gives a short window here and nothing after it, so this is the difference between
+		a graceful shutdown costing nothing and costing everyone their last minute.
+	]]
+	game:BindToClose(function()
+		for userId, entry in PlotService.all() do
+			PlotService.save(userId, entry, true)
+		end
+	end)
 
 	local sinceTick = 0
 	local sinceIdleSnapshot = 0

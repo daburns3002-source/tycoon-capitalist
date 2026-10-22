@@ -29,7 +29,9 @@ local Cycle = require(Economy.Cycle)
 local Format = require(Economy.Format)
 local Revenue = require(Economy.Revenue)
 local ServerScriptService = game:GetService("ServerScriptService")
+local Offline = require(ServerScriptService.Server.Tick.Offline)
 local PlotState = require(ServerScriptService.Server.Plot.PlotState)
+local Serialise = require(ServerScriptService.Server.Data.Serialise)
 local TestRunner = require(ServerStorage.Tests.TestRunner)
 local UnlockConfig = require(Shared.Config.Unlocks)
 local UpgradeConfig = require(Shared.Config.Upgrades)
@@ -619,6 +621,110 @@ local function testUnlocks(): (number, number)
 	return t:finish()
 end
 
+local function testPersistence(): (number, number)
+	local t = TestRunner.new("Persistence")
+
+	-- A plot with everything on it: cash, units, a manager, an upgrade, angels.
+	local plot = PlotState.new(7)
+	plot.cash = BigNumber.fromParts(1.5, 30)
+	plot.lifetimeEarnings = BigNumber.fromParts(9.87, 42)
+	plot.earningsBeforeThisRun = BigNumber.fromParts(1, 20)
+	plot.angels = 4321
+	plot.angelsSacrificed = 17
+	plot.businesses.LemonadeStand.unitsOwned = 537
+	plot.businesses.Bank.unitsOwned = 12
+	plot.businesses.Bank.hasManager = true
+	plot.businesses.OilCompany.hasAccountant = true
+	plot.upgradesOwned.LittleUmbrellas = true
+	plot.upgradesOwned.Monopoly = true
+	PlotState.recomputeMultipliers(plot)
+
+	local stored = Serialise.save(plot)
+	local loaded, savedAt = Serialise.load(stored, function()
+		return PlotState.new(7)
+	end)
+	PlotState.recomputeMultipliers(loaded)
+
+	-- Money has to survive exactly. A save that rounds is a save that steals.
+	t:bigEquals("cash round-trips", loaded.cash, 1.5, 30)
+	t:bigEquals("lifetime round-trips", loaded.lifetimeEarnings, 9.87, 42)
+	t:bigEquals("previous-run earnings round-trip", loaded.earningsBeforeThisRun, 1, 20)
+	t:equals("angels round-trip", loaded.angels, 4321)
+	t:equals("sacrificed angels round-trip", loaded.angelsSacrificed, 17)
+	t:equals("units round-trip", loaded.businesses.LemonadeStand.unitsOwned, 537)
+	t:equals("managers round-trip", loaded.businesses.Bank.hasManager, true)
+	t:equals("accountants round-trip", loaded.businesses.OilCompany.hasAccountant, true)
+	t:equals("upgrades round-trip", loaded.upgradesOwned.Monopoly, true)
+	t:isTrue("savedAt is written", savedAt ~= nil and savedAt > 0)
+
+	-- Multipliers are derived, never stored, so they must come back identical from the inputs.
+	t:equals(
+		"derived multipliers match",
+		loaded.businesses.LemonadeStand.profitMultiplier,
+		plot.businesses.LemonadeStand.profitMultiplier
+	)
+	t:equals("derived all-multiplier matches", loaded.allProfitMultiplier, plot.allProfitMultiplier)
+
+	-- Cycle timestamps are an os.clock() reading and meaningless in another process.
+	t:equals("cycles are not restored", loaded.businesses.Bank.cycleStartedAt, nil)
+
+	-- A missing or junk profile yields a playable plot rather than an error.
+	local fresh = Serialise.load(nil, function()
+		return PlotState.new(8)
+	end)
+	t:equals("nil profile gives a fresh plot", fresh.businesses.LemonadeStand.unitsOwned, 1)
+	local junk = Serialise.load({ version = 1, businesses = "nonsense" }, function()
+		return PlotState.new(9)
+	end)
+	t:isTrue("malformed profile still loads", BigNumber.isZero(junk.cash))
+
+	return t:finish()
+end
+
+local function testOfflineEarnings(): (number, number)
+	local t = TestRunner.new("Offline")
+
+	local plot = PlotState.new(11)
+	plot.businesses.LemonadeStand.unitsOwned = 10
+	plot.businesses.LemonadeStand.hasManager = true
+
+	-- One Lemonade Stand cycle is 0.6s and ten units pay $10, so an hour is 6000 cycles.
+	local hour = Offline.settle(plot, 0, 3600)
+	t:equals("one business contributed", hour.businesses, 1)
+	t:equalsApprox("an hour pays 6000 cycles", BigNumber.toNumber(hour.earned), 6000 * 10, 1e-9)
+	t:equalsApprox("cash credited", BigNumber.toNumber(plot.cash), 6000 * 10, 1e-9)
+	-- Offline money is real money: it has to count toward angels like any other.
+	t:equalsApprox(
+		"lifetime credited too",
+		BigNumber.toNumber(plot.lifetimeEarnings),
+		6000 * 10,
+		1e-9
+	)
+
+	-- An unmanaged business earns nothing while away. That is the point of managers.
+	local unmanaged = PlotState.new(12)
+	unmanaged.businesses.LemonadeStand.unitsOwned = 100
+	local idle = Offline.settle(unmanaged, 0, 3600)
+	t:equals("unmanaged earns nothing", idle.businesses, 0)
+	t:isTrue("and credits nothing", BigNumber.isZero(unmanaged.cash))
+
+	-- Clamped at both ends.
+	local backwards = PlotState.new(13)
+	backwards.businesses.LemonadeStand.unitsOwned = 10
+	backwards.businesses.LemonadeStand.hasManager = true
+	local negative = Offline.settle(backwards, 5000, 1000)
+	t:equals("a backwards clock pays nothing", negative.seconds, 0)
+	t:isTrue("and credits nothing", BigNumber.isZero(backwards.cash))
+
+	local long = PlotState.new(14)
+	long.businesses.LemonadeStand.unitsOwned = 10
+	long.businesses.LemonadeStand.hasManager = true
+	local capped = Offline.settle(long, 0, 60 * 24 * 60 * 60)
+	t:equals("a 60-day absence is capped", capped.seconds, Offline.maxSeconds)
+
+	return t:finish()
+end
+
 function Spec.run(): boolean
 	print("[economy] running suite")
 
@@ -632,6 +738,8 @@ function Spec.run(): boolean
 		testConfigIntegrity,
 		testUpgradesAndManagers,
 		testUnlocks,
+		testPersistence,
+		testOfflineEarnings,
 	}
 
 	local passed, failed = 0, 0
