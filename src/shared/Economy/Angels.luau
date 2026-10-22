@@ -32,9 +32,36 @@ type BigNumber = Types.BigNumber
 
 local Angels = {}
 
---[[ 400e9/9 for Earth and the Moon. Mars divides 100e9 by 9 instead. ]]
-local EARTH_DIVISOR = BigNumber.fromNumber(400e9 / 9)
-local MARS_DIVISOR = BigNumber.fromNumber(100e9 / 9)
+--[[
+	The divisor, kept as a fraction rather than as one number.
+
+	The formula divides by 400e9/9 on Earth and the Moon, and by 100e9/9 on Mars. Precomputing
+	that quotient loses the answer: 400e9/9 is not representable in binary, so it lands on a
+	mantissa of 4.4444444444444446, and dividing 1e15 by it gives 22499.999999999996 instead of
+	22500. The square root is then 149.99999999999997, which floors to **149 angels instead of
+	150** -- an off-by-one the player would see on every reset at a round number.
+
+	Dividing by the numerator and the denominator separately keeps it exact: 1e15 x 9 is 9e15
+	exactly, 9e15 / 400e9 is 22500 exactly, and sqrt(22500) is 150 exactly. Both operands are
+	powers of ten times a small integer, so every step is representable.
+
+	Found by running the suite in Studio. The Python verifier could never have caught it -- it
+	works in Decimal, where the precomputed quotient is exact.
+]]
+export type Divisor = {
+	scale: number,
+	base: BigNumber,
+}
+
+local EARTH_DIVISOR: Divisor = table.freeze({
+	scale = 9,
+	base = BigNumber.fromNumber(400e9),
+})
+
+local MARS_DIVISOR: Divisor = table.freeze({
+	scale = 9,
+	base = BigNumber.fromNumber(100e9),
+})
 
 Angels.earthDivisor = EARTH_DIVISOR
 Angels.marsDivisor = MARS_DIVISOR
@@ -48,14 +75,17 @@ Angels.profitPerAngel = 0.02
 	This is the raw `sqrt(lifetime / divisor)` term. Mostly useful for a "what would I get"
 	projection; the actual payout on reset is `gainOnReset`.
 ]]
-function Angels.totalForEarnings(lifetimeEarnings: BigNumber, divisor: BigNumber?): number
+function Angels.totalForEarnings(lifetimeEarnings: BigNumber, divisor: Divisor?): number
 	if BigNumber.isZero(lifetimeEarnings) or lifetimeEarnings.mantissa < 0 then
 		return 0
 	end
 
-	local ratio = BigNumber.div(lifetimeEarnings, divisor or EARTH_DIVISOR)
-	local root = BigNumber.sqrt(ratio)
-	return BigNumber.toNumber(root)
+	local effective = divisor or EARTH_DIVISOR
+	-- Numerator first, then denominator. See the note on Divisor: collapsing these into one
+	-- division costs an angel at every round number.
+	local scaled = BigNumber.mulNumber(lifetimeEarnings, effective.scale)
+	local ratio = BigNumber.div(scaled, effective.base)
+	return BigNumber.toNumber(BigNumber.sqrt(ratio))
 end
 
 --[[
@@ -75,7 +105,7 @@ function Angels.gainOnReset(
 	lifetimeEarnings: BigNumber,
 	earningsBeforeThisRun: BigNumber,
 	angelsSacrificed: number,
-	divisor: BigNumber?
+	divisor: Divisor?
 ): number
 	local effectiveDivisor = divisor or EARTH_DIVISOR
 
@@ -98,10 +128,12 @@ end
 	Inverts the formula: `(n + 1)^2 * divisor`. Drives the "next angel at $X" readout, which is
 	what makes a player decide to push one more business rather than reset now.
 ]]
-function Angels.earningsForNextAngel(currentTotal: number, divisor: BigNumber?): BigNumber
+function Angels.earningsForNextAngel(currentTotal: number, divisor: Divisor?): BigNumber
+	local effective = divisor or EARTH_DIVISOR
 	local target = math.floor(currentTotal) + 1
 	local squared = BigNumber.fromNumber(target * target)
-	return BigNumber.mul(squared, divisor or EARTH_DIVISOR)
+	-- Inverts totalForEarnings, so it has to undo the fraction the same way round.
+	return BigNumber.divNumber(BigNumber.mul(squared, effective.base), effective.scale)
 end
 
 --[[

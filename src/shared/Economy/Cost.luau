@@ -56,6 +56,21 @@ function Cost.bulkCost(config: BusinessConfig, owned: number, quantity: number):
 		error("Cost.bulkCost: owned cannot be negative", 2)
 	end
 
+	--[[
+		A batch of one is the single most common call -- every x1 purchase and every
+		affordability check -- and the series is not exact for it.
+
+		`(c^1 - 1) / (c - 1)` should be 1, but with c = 1.09 the float arithmetic yields
+		0.99999999999999989, so a single Movie Studio priced through the series came out at
+		179159039.99999997 against a unit cost of 179159040. A player holding exactly the unit
+		price was then told they could not afford it, because `maxAffordable` compared the two
+		figures and the series one was larger. Returning the unit cost directly is exact, is one
+		multiply instead of four operations, and removes the inconsistency at its source.
+	]]
+	if quantity == 1 then
+		return Cost.unitCost(config, owned + 1)
+	end
+
 	local coefficient = config.coefficient
 	local base = BigNumber.mul(config.initialCost, BigNumber.powNumber(coefficient, owned))
 	local seriesNumerator = BigNumber.sub(BigNumber.powNumber(coefficient, quantity), BigNumber.one)
@@ -87,7 +102,12 @@ function Cost.maxAffordable(
 
 	local coefficient = config.coefficient
 	local base = BigNumber.mul(config.initialCost, BigNumber.powNumber(coefficient, owned))
-	if BigNumber.lt(available, base) then
+
+	-- Gate on the price actually charged for one unit, not on `base`. The two differ by a
+	-- rounding step, and when they did, a player holding exactly the price of one unit was
+	-- refused it. Anything that decides affordability has to ask the same function that will
+	-- take the money.
+	if BigNumber.lt(available, Cost.bulkCost(config, owned, 1)) then
 		return 0
 	end
 
