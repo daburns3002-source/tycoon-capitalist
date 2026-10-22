@@ -40,11 +40,8 @@ local Production = {}
 ]]
 local MAX_CYCLES_PER_ADVANCE = 10000
 
-export type Payment = {
-	id: Types.BusinessId,
-	cycles: number,
-	amount: Types.BigNumber,
-}
+-- Defined in Shared.Types so the client can name the same shape when it receives one.
+export type Payment = Types.CyclePayment
 
 --[[
 	Settle every active cycle on a plot against `now`.

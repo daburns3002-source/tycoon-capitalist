@@ -27,9 +27,14 @@ Phase 1 complete: the number system and the economy core. `src/shared/Economy` h
 Format, Cost, Cycle, Revenue and Angels; `src/shared/Config/Businesses.luau` holds the exact
 Earth table. All pure.
 
-Phase 2 **built but not playtested**: a grey-box plot with a board, server-authoritative plot
-state, a production tick, and the panel with one business row. The playtest gate has not been
-run, so nothing here is confirmed to feel right.
+Phase 2 **built, verified in Studio, not yet playtested by a human**: a grey-box plot with a
+board, server-authoritative plot state, a production tick, and the panel. The economy suite runs
+green in Studio (103 assertions) and the loop has been driven end to end through the remotes, but
+nobody has judged how it *feels*.
+
+Phase 4's styling foundation landed early, on request: `UI/Theme` and `UI/Bubbly` carry the
+Steal An Egg look -- stroked type, sticker buttons, icon chips, gradient numbers, press pops.
+The rest of Phase 4 (layouts per device, number pops on collect, sound) is still ahead.
 
 Next: run the Phase 2 playtest. Then Phase 3, all ten businesses. See `docs/ROADMAP.md`.
 

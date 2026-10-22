@@ -40,6 +40,16 @@ local function main(): ()
 
 	table.insert(
 		connections,
+		Remotes.get(Remotes.toClient.CyclePaid).OnClientEvent
+			:Connect(function(payments: { Types.CyclePayment })
+				for _, payment in payments do
+					panel:notifyPaid(payment.id, payment.amount)
+				end
+			end)
+	)
+
+	table.insert(
+		connections,
 		Remotes.get(Remotes.toClient.IntentRejected).OnClientEvent
 			:Connect(function(intent: string, reason: string)
 				-- Phase 4 turns this into a toast. Logging it now means a rejected action is

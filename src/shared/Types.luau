@@ -72,6 +72,19 @@ export type PlotState = {
 
 export type DeviceTier = "Low" | "Medium" | "High"
 
+--[[
+	One business's payout, as sent to the client when a cycle completes.
+
+	Drives the number pop and the collect sound. The authoritative totals still arrive in the
+	snapshot -- this is presentation, and a client that ignored it would still see the right
+	cash.
+]]
+export type CyclePayment = {
+	id: BusinessId,
+	cycles: number,
+	amount: BigNumber,
+}
+
 export type BuyMode = "x1" | "x10" | "x100" | "max"
 
 --[[
