@@ -21,6 +21,7 @@ local Businesses = require(Shared.Config.Businesses)
 local Cost = require(Shared.Economy.Cost)
 local Cycle = require(Shared.Economy.Cycle)
 local Types = require(Shared.Types)
+local Unlocks = require(Shared.Config.Unlocks)
 local Upgrades = require(Shared.Config.Upgrades)
 
 local PlotService = require(script.Parent.Parent.Plot.PlotService)
@@ -98,6 +99,25 @@ function Snapshot.build(entry: PlotService.Entry, now: number): Types.PlotSnapsh
 		})
 	end
 
+	--[[
+		The unlock ladder, with how close each one is.
+
+		`progress` is 0..1 toward the goal, so the UI can show a bar without knowing the rule
+		that the Capitalist ladder is gated on the weakest business rather than on one of them.
+	]]
+	local unlocks: { Types.UnlockSnapshot } = {}
+	for _, config in Unlocks.list do
+		local units = if config.owner == Unlocks.capitalist
+			then PlotState.lowestUnitCount(plot)
+			else (plot.businesses[config.owner] and plot.businesses[config.owner].unitsOwned or 0)
+
+		table.insert(unlocks, {
+			id = config.id,
+			earned = units >= config.goal,
+			progress = math.clamp(units / config.goal, 0, 1),
+		})
+	end
+
 	return {
 		cash = plot.cash,
 		lifetimeEarnings = plot.lifetimeEarnings,
@@ -108,6 +128,7 @@ function Snapshot.build(entry: PlotService.Entry, now: number): Types.PlotSnapsh
 		globalMilestones = PlotState.globalMilestones(plot),
 		businesses = businesses,
 		upgrades = upgrades,
+		unlocks = unlocks,
 	}
 end
 

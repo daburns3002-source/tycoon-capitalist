@@ -31,6 +31,7 @@ local Revenue = require(Economy.Revenue)
 local ServerScriptService = game:GetService("ServerScriptService")
 local PlotState = require(ServerScriptService.Server.Plot.PlotState)
 local TestRunner = require(ServerStorage.Tests.TestRunner)
+local UnlockConfig = require(Shared.Config.Unlocks)
 local UpgradeConfig = require(Shared.Config.Upgrades)
 
 local Spec = {}
@@ -548,6 +549,76 @@ local function testUpgradesAndManagers(): (number, number)
 	return t:finish()
 end
 
+local function testUnlocks(): (number, number)
+	local t = TestRunner.new("Unlocks")
+
+	local plot = PlotState.new(1)
+
+	-- Nothing earned from one free stand.
+	t:equals("lowest count starts at 0", PlotState.lowestUnitCount(plot), 0)
+	t:equals("lemonade x1 earns nothing", plot.businesses.LemonadeStand.profitMultiplier, 1)
+
+	-- The speed marks are Economy.Cycle's job. Crossing 400 must NOT grant a profit
+	-- multiplier here, or every cycle would effectively be doubled twice over.
+	plot.businesses.LemonadeStand.unitsOwned = 400
+	PlotState.recomputeMultipliers(plot)
+	t:equals(
+		"400 units grants no profit multiplier",
+		plot.businesses.LemonadeStand.profitMultiplier,
+		1
+	)
+
+	-- 500 is where profit multipliers start. Lemonade is the generous one at x4.
+	plot.businesses.LemonadeStand.unitsOwned = 500
+	PlotState.recomputeMultipliers(plot)
+	t:equals("500 lemonade is x4", plot.businesses.LemonadeStand.profitMultiplier, 4)
+
+	-- They stack: 500 through 900 are x4 each, 1000 is x5.
+	plot.businesses.LemonadeStand.unitsOwned = 1000
+	PlotState.recomputeMultipliers(plot)
+	t:equals("1000 lemonade is 4^5 * 5", plot.businesses.LemonadeStand.profitMultiplier, 4 ^ 5 * 5)
+
+	-- Newspaper Delivery multiplies *other* businesses. 125 units is the first ad deal.
+	local fresh = PlotState.new(2)
+	fresh.businesses.NewspaperDelivery.unitsOwned = 125
+	PlotState.recomputeMultipliers(fresh)
+	t:equals("newspaper 125 gives lemonade x2", fresh.businesses.LemonadeStand.profitMultiplier, 2)
+	t:equals(
+		"newspaper does not boost itself there",
+		fresh.businesses.NewspaperDelivery.profitMultiplier,
+		1
+	)
+
+	-- The Capitalist ladder is gated on the weakest business, not a total.
+	local everywhere = PlotState.new(3)
+	for _, state in everywhere.businesses do
+		state.unitsOwned = 500
+	end
+	PlotState.recomputeMultipliers(everywhere)
+	t:equals("all at 500 gives the capitalist x2", everywhere.allProfitMultiplier, 2)
+
+	everywhere.businesses.OilCompany.unitsOwned = 499
+	PlotState.recomputeMultipliers(everywhere)
+	t:equals("one business short loses it", everywhere.allProfitMultiplier, 1)
+	t:equals("lowest count reflects the laggard", PlotState.lowestUnitCount(everywhere), 499)
+
+	-- Every unlock must point at a real business, and no speed unlock may sit past 400.
+	local badTarget, lateSpeed = nil, nil
+	for _, config in UnlockConfig.list do
+		local validTarget = config.target == "all" or Businesses.byId[config.target] ~= nil
+		if not validTarget and badTarget == nil then
+			badTarget = `{config.id} -> {config.target}`
+		end
+		if config.kind == "speed" and config.goal > 400 and lateSpeed == nil then
+			lateSpeed = `{config.id} at {config.goal}`
+		end
+	end
+	t:record("every unlock targets a real business", badTarget == nil, badTarget)
+	t:record("no speed unlock past 400", lateSpeed == nil, lateSpeed)
+
+	return t:finish()
+end
+
 function Spec.run(): boolean
 	print("[economy] running suite")
 
@@ -560,6 +631,7 @@ function Spec.run(): boolean
 		testFormat,
 		testConfigIntegrity,
 		testUpgradesAndManagers,
+		testUnlocks,
 	}
 
 	local passed, failed = 0, 0

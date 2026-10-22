@@ -27,6 +27,7 @@ local Businesses = require(Shared.Config.Businesses)
 local Format = require(Shared.Economy.Format)
 local Remotes = require(Shared.Net.Remotes)
 local Types = require(Shared.Types)
+local Unlocks = require(Shared.Config.Unlocks)
 local Upgrades = require(Shared.Config.Upgrades)
 
 local Bubbly = require(script.Parent.Bubbly)
@@ -91,6 +92,8 @@ export type Panel = typeof(setmetatable(
 		angelLabel: TextLabel,
 		rowHolder: ScrollingFrame,
 		upgradeHolder: ScrollingFrame,
+		unlockHolder: ScrollingFrame,
+		unlockRows: { [string]: { container: Frame, tick: TextLabel, fill: Frame, goal: TextLabel } },
 		angelView: Frame,
 		angelHeadline: TextLabel,
 		angelBonus: TextLabel,
@@ -205,17 +208,22 @@ local function buildTabs(self: Panel, parent: Frame): ()
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = bar
 
-	local names = { businesses = "BUSINESSES", upgrades = "UPGRADES", angels = "ANGELS" }
-	local order = { "businesses", "upgrades", "angels" }
+	local names = {
+		businesses = "BUSINESSES",
+		unlocks = "GOALS",
+		upgrades = "UPGRADES",
+		angels = "ANGELS",
+	}
+	local order = { "businesses", "unlocks", "upgrades", "angels" }
 
 	for index, key in order do
 		local button = Bubbly.button(key, bar, {
 			fill = Theme.colour.panelDeep,
 			outline = Theme.colour.text,
 			text = names[key],
-			textSize = 18,
+			textSize = 15,
 		})
-		button.Size = UDim2.new(1 / 3, -Theme.metric.rowGap, 1, 0)
+		button.Size = UDim2.new(0.25, -Theme.metric.rowGap, 1, 0)
 		button.LayoutOrder = index
 		self.tabButtons[key] = button
 
@@ -386,6 +394,88 @@ local function buildAngelView(self: Panel, parent: Frame): ()
 			Remotes.get(Remotes.toServer.PerformReset):FireServer()
 		end)
 	)
+end
+
+--[[
+	One unlock row: a named goal, what it gives, and how close you are.
+
+	This list is the answer to "what am I working toward". The business rows say what a purchase
+	costs; this says what it is *for*. The source game buries the same information behind a side
+	menu, which is a large part of why its mid-game can feel like watching a number rather than
+	chasing something.
+
+	Earned rows stay in the list rather than disappearing -- a ladder you can see yourself
+	climbing is the point, and a list that only shows what is left reads as a chore.
+]]
+local function buildUnlockRow(self: Panel, config: Types.UnlockConfig): ()
+	local container = Bubbly.panel(config.id, self.unlockHolder, Theme.colour.row)
+	container.Size = UDim2.new(1, -8, 0, 80)
+	container.LayoutOrder = #self.unlockHolder:GetChildren()
+
+	local tick = Bubbly.label("Tick", container, {
+		size = 24,
+		alignment = Enum.TextXAlignment.Center,
+	})
+	tick.Size = UDim2.fromOffset(44, 44)
+	tick.Position = UDim2.fromOffset(12, 12)
+
+	local title = Bubbly.label("Title", container, {
+		text = config.displayName,
+		size = 18,
+	})
+	title.Size = UDim2.new(1, -170, 0, 22)
+	title.Position = UDim2.fromOffset(62, 8)
+
+	local ownerName = if config.owner == Unlocks.capitalist
+		then "every business"
+		else Businesses.byId[config.owner].displayName
+
+	local effect = if config.kind == "speed"
+		then `{ownerName} cycle speed x2`
+		elseif config.target == "all" then `all businesses profit x{config.multiplier}`
+		else `{Businesses.byId[config.target].displayName} profit x{config.multiplier}`
+
+	local detail = Bubbly.label("Effect", container, {
+		text = effect,
+		size = 14,
+		colour = Theme.colour.textDim,
+		strokeThickness = Theme.metric.textStrokeSmall,
+	})
+	detail.Size = UDim2.new(1, -170, 0, 18)
+	detail.Position = UDim2.fromOffset(62, 30)
+
+	local goal = Bubbly.label("Goal", container, {
+		text = `{ownerName} x{config.goal}`,
+		size = 15,
+		alignment = Enum.TextXAlignment.Right,
+		gradient = Theme.gradient.count,
+	})
+	goal.Size = UDim2.fromOffset(150, 22)
+	goal.Position = UDim2.new(1, -162, 0, 10)
+
+	local track = Instance.new("Frame")
+	track.Name = "Track"
+	track.BackgroundColor3 = Theme.colour.track
+	track.BorderSizePixel = 0
+	-- Sits below the effect line rather than through it; the row is sized to leave room.
+	track.Size = UDim2.new(1, -74, 0, 10)
+	track.Position = UDim2.new(0, 62, 1, -9)
+	track.AnchorPoint = Vector2.new(0, 1)
+	track.ZIndex = 3
+	track.Parent = container
+	Bubbly.corner(track, 5)
+	Bubbly.stroke(track, Theme.colour.outline, 2)
+
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.BackgroundColor3 = Theme.colour.blue
+	fill.BorderSizePixel = 0
+	fill.Size = UDim2.fromScale(0, 1)
+	fill.ZIndex = 4
+	fill.Parent = track
+	Bubbly.corner(fill, 5)
+
+	self.unlockRows[config.id] = { container = container, tick = tick, fill = fill, goal = goal }
 end
 
 --[[ The x1 / x10 / x100 / MAX selector. ]]
@@ -688,6 +778,8 @@ function Panel.new(): Panel
 		angelLabel = nil :: any,
 		rowHolder = nil :: any,
 		upgradeHolder = nil :: any,
+		unlockHolder = nil :: any,
+		unlockRows = {},
 		angelView = nil :: any,
 		angelHeadline = nil :: any,
 		angelBonus = nil :: any,
@@ -761,6 +853,29 @@ function Panel.new(): Panel
 		buildUpgradeRow(self, config)
 	end
 
+	local unlockHolder = Instance.new("ScrollingFrame")
+	unlockHolder.Name = "UnlockList"
+	unlockHolder.BackgroundTransparency = 1
+	unlockHolder.BorderSizePixel = 0
+	unlockHolder.Size = UDim2.new(1, 0, 1, -212)
+	unlockHolder.CanvasSize = UDim2.new()
+	unlockHolder.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	unlockHolder.ScrollBarThickness = 6
+	unlockHolder.ScrollBarImageColor3 = Theme.colour.textDim
+	unlockHolder.LayoutOrder = 4
+	unlockHolder.Visible = false
+	unlockHolder.Parent = surface
+	self.unlockHolder = unlockHolder
+
+	local unlockLayout = Instance.new("UIListLayout")
+	unlockLayout.Padding = UDim.new(0, Theme.metric.rowGap)
+	unlockLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	unlockLayout.Parent = unlockHolder
+
+	for _, config in Unlocks.list do
+		buildUnlockRow(self, config)
+	end
+
 	buildAngelView(self, surface)
 
 	--[[
@@ -800,6 +915,7 @@ function Panel.setTab(self: Panel, tab: string): ()
 	end
 
 	self.rowHolder.Visible = tab == "businesses"
+	self.unlockHolder.Visible = tab == "unlocks"
 	self.upgradeHolder.Visible = tab == "upgrades"
 	self.angelView.Visible = tab == "angels"
 
@@ -999,6 +1115,24 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 		self.resetButton.BackgroundColor3 = Theme.colour.panelDeep
 	end
 	self.angelNext.Text = `next angel at {Format.money(snapshot.nextAngelAt)} lifetime earnings`
+
+	for _, unlock in snapshot.unlocks do
+		local widget = self.unlockRows[unlock.id]
+		if widget == nil then
+			continue
+		end
+
+		widget.tick.Text = if unlock.earned then "✔" else ""
+		widget.tick.TextColor3 = Theme.colour.green
+		widget.fill.Size = UDim2.fromScale(unlock.progress, 1)
+		widget.fill.BackgroundColor3 = if unlock.earned
+			then Theme.colour.green
+			else Theme.colour.blue
+		widget.container.BackgroundColor3 = if unlock.earned
+			then Theme.colour.rowActive
+			else Theme.colour.row
+		widget.container.BackgroundTransparency = if unlock.earned then 0.4 else 0
+	end
 
 	for _, upgrade in snapshot.upgrades do
 		local widget = self.upgradeRows[upgrade.id]

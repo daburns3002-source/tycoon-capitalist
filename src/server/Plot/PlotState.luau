@@ -21,6 +21,7 @@ local Cost = require(Shared.Economy.Cost)
 local Cycle = require(Shared.Economy.Cycle)
 local Revenue = require(Shared.Economy.Revenue)
 local Types = require(Shared.Types)
+local Unlocks = require(Shared.Config.Unlocks)
 local Upgrades = require(Shared.Config.Upgrades)
 
 type BigNumber = Types.BigNumber
@@ -86,6 +87,36 @@ function PlotState.new(userId: number): PlotState
 end
 
 --[[
+	The smallest unit count across every business.
+
+	The Capitalist unlock ladder is gated on this rather than on a total: "500 of everything"
+	means the weakest business has 500, so one neglected business holds the whole ladder back.
+	That is the source game's rule and it is what stops a player from coasting on a single
+	business.
+]]
+function PlotState.lowestUnitCount(plot: PlotState): number
+	local lowest = math.huge
+	for _, config in Businesses.list do
+		local state = plot.businesses[config.id]
+		local units = if state then state.unitsOwned else 0
+		if units < lowest then
+			lowest = units
+		end
+	end
+	return if lowest == math.huge then 0 else lowest
+end
+
+--[[ Whether a given unlock has been earned, from unit counts alone. ]]
+function PlotState.hasUnlock(plot: PlotState, config: Types.UnlockConfig): boolean
+	if config.owner == Unlocks.capitalist then
+		return PlotState.lowestUnitCount(plot) >= config.goal
+	end
+
+	local state = plot.businesses[config.owner]
+	return state ~= nil and state.unitsOwned >= config.goal
+end
+
+--[[
 	Recompute every multiplier from the set of owned upgrades.
 
 	Derived rather than incremented on purchase. Incrementing works right up until something
@@ -97,6 +128,28 @@ function PlotState.recomputeMultipliers(plot: PlotState): ()
 	local allMultiplier = 1
 	local effectiveness = 1
 	local perBusiness: { [Types.BusinessId]: number } = {}
+
+	--[[
+		Unlocks first. They are earned by owning units rather than bought, so there is no owned
+		set to consult -- only the unit counts, which is why this has to be recomputed on every
+		purchase rather than only when something is bought.
+
+		`speed` unlocks are skipped on purpose. They are the cycle-time halvings that
+		Economy.Cycle already applies; applying them here as well would halve every cycle twice
+		and quietly double the whole game's pace.
+	]]
+	for _, config in Unlocks.list do
+		if config.kind ~= "profit" or not PlotState.hasUnlock(plot, config) then
+			continue
+		end
+
+		if config.target == "all" then
+			allMultiplier *= config.multiplier
+		else
+			local current = perBusiness[config.target] or 1
+			perBusiness[config.target] = current * config.multiplier
+		end
+	end
 
 	for _, config in Upgrades.list do
 		if not plot.upgradesOwned[config.id] then

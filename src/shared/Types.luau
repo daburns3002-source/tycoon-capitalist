@@ -97,6 +97,32 @@ export type UpgradeConfig = {
 	cost: BigNumber,
 }
 
+--[[
+	One unlock: a named milestone earned by owning units, never bought.
+
+	`owner` is the business whose unit count gates it, or "Capitalist" for the ladder gated on
+	every business at once. `kind` is "speed" for the cycle-time halvings -- which `Economy.Cycle`
+	already applies, so those are display-only here -- or "profit" for a multiplier that is
+	genuinely applied. `target` is the business the multiplier lands on, which is not always the
+	owner: Newspaper Delivery's unlocks multiply other businesses.
+]]
+export type UnlockConfig = {
+	id: string,
+	owner: string,
+	goal: number,
+	displayName: string,
+	kind: "speed" | "profit",
+	target: string,
+	multiplier: number,
+}
+
+--[[ What the client is told about one unlock: earned, and how close the next one is. ]]
+export type UnlockSnapshot = {
+	id: string,
+	earned: boolean,
+	progress: number,
+}
+
 --[[ What the client is told about one upgrade. ]]
 export type UpgradeSnapshot = {
 	id: string,
@@ -175,6 +201,7 @@ export type PlotSnapshot = {
 	globalMilestones: number,
 	businesses: { BusinessSnapshot },
 	upgrades: { UpgradeSnapshot },
+	unlocks: { UnlockSnapshot },
 }
 
 return nil

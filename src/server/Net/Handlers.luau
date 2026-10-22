@@ -188,6 +188,14 @@ local function onBuyUnits(player: Player, businessId: unknown, mode: unknown): (
 		state.unitsOwned = Businesses.maxUnits
 	end
 
+	--[[
+		Unit counts gate the unlock ladder, so buying units can earn a profit multiplier. The
+		multipliers are derived, so they have to be recomputed here as well as on an upgrade
+		purchase -- miss this and crossing 500 units would light up the unlock in the UI while
+		paying nothing.
+	]]
+	PlotState.recomputeMultipliers(plot)
+
 	PlotBuilder.updateBuilding(entry.world, id, state.unitsOwned)
 	Handlers.pushSnapshot(player, entry)
 end

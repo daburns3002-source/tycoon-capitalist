@@ -23,20 +23,25 @@ design work — the source game has no movement, no items, no teams and no ranke
 
 ## Where we are
 
-Phase 1 complete: the number system and the economy core. `src/shared/Economy` holds BigNumber,
-Format, Cost, Cycle, Revenue and Angels; `src/shared/Config/Businesses.luau` holds the exact
-Earth table. All pure.
+The full AdVenture Capitalist loop is implemented and runs in Studio. Not yet persisted, not yet
+published, and only lightly playtested.
 
-Phase 2 **built, verified in Studio, not yet playtested by a human**: a grey-box plot with a
-board, server-authoritative plot state, a production tick, and the panel. The economy suite runs
-green in Studio (103 assertions) and the loop has been driven end to end through the remotes, but
-nobody has judged how it *feels*.
+- **Phase 1 — economy core.** `src/shared/Economy`: BigNumber, Format, Cost, Cycle, Revenue,
+  Angels. `src/shared/Config`: the exact Earth business table, 35 cash upgrades, 157 unlocks.
+  All pure, all tested.
+- **Phase 2 — the board and the panel.** Grey-box plot, server-authoritative plot state, a 10Hz
+  production tick, a panel with four tabs. Playtested once and judged to hold up.
+- **Phase 3 — content.** All ten businesses with locked rows, managers, cash upgrades, the
+  unlock ladder.
+- **Phase 4 — styling foundation**, landed early: `UI/Theme` and `UI/Bubbly` carry the Steal An
+  Egg look. Per-device layouts and sound are still ahead.
+- **Phase 6 — Angel Investors.** Reset flow with a two-tap confirm.
 
-Phase 4's styling foundation landed early, on request: `UI/Theme` and `UI/Bubbly` carry the
-Steal An Egg look -- stroked type, sticker buttons, icon chips, gradient numbers, press pops.
-The rest of Phase 4 (layouts per device, number pops on collect, sound) is still ahead.
+The economy suite runs in Studio at **128 assertions**.
 
-Next: run the Phase 2 playtest. Then Phase 3, all ten businesses. See `docs/ROADMAP.md`.
+Next, in the order that matters most: **Phase 5 persistence and offline earnings** (the single
+biggest retention mechanic in the genre, and `Production.advance` already settles an arbitrary
+elapsed interval in one step), then angel upgrades to give angels a sink, then a leaderboard.
 
 ## Commands
 
@@ -78,6 +83,12 @@ Known-good anchors to keep in the suite:
 | $1 septillion lifetime to angels | 4,743,416 |
 | 400 of every business, Oil cycle | exactly 9 s (36864 / 2^12) |
 | Lemonade Stand displayed 2nd price | $4.00 (base 4/1.07) |
+
+**Milestones at 25-400 are speed, not profit.** The source game's unlocks at 25/50/100/200/300/400
+are "Profit Speed Doubled" -- the cycle-time halvings `Economy.Cycle` already applies. Profit
+multipliers only start at 500 units. `Config/Unlocks.luau` lists the speed ones for display and
+marks them `kind = "speed"`; applying them as multipliers would double the game's pace twice over,
+and there is a test pinning that they are not.
 
 **The wiki is wrong about the Car Wash.** It states the second unit costs $829.92, which is
 728 × 1.14; the initial cost is 720, so the correct price is 720 × 1.14 = **$820.80**. Do not
