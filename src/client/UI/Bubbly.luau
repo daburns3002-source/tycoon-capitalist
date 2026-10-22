@@ -279,6 +279,37 @@ function Bubbly.panel(name: string, parent: Instance, fill: Color3?): Frame
 end
 
 --[[
+	Flash a frame's fill colour and let it settle back.
+
+	Used when a production cycle pays out. The Lemonade Stand's cycle is 0.6 seconds, so the
+	progress bar crosses and empties faster than the eye reliably catches -- without a flash the
+	whole thing reads as a bar that never moved. The flash is what makes a completed cycle
+	legible at that speed, and it costs one tween.
+]]
+function Bubbly.flash(frame: Frame, from: Color3, to: Color3): ()
+	frame.BackgroundColor3 = to
+	TweenService:Create(
+		frame,
+		TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ BackgroundColor3 = from }
+	):Play()
+end
+
+--[[
+	A slow breathing pulse, to mark something as waiting to be tapped.
+
+	Returns the tween so the caller can stop it; a pulse left running on a row that is now
+	busy is worse than no pulse at all.
+]]
+function Bubbly.pulse(object: GuiObject, property: string, from: number, to: number): Tween
+	local info = TweenInfo.new(0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+	local tween = TweenService:Create(object, info, { [property] = to });
+	(object :: any)[property] = from
+	tween:Play()
+	return tween
+end
+
+--[[
 	A number that flies up and fades, for a collected payout.
 
 	Destroys itself when it finishes, so the caller has no cleanup to forget -- the leak this

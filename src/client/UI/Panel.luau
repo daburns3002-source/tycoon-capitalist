@@ -59,7 +59,9 @@ type Row = {
 	units: TextLabel,
 	payout: TextLabel,
 	milestone: TextLabel,
+	progressTrack: Frame,
 	progressFill: Frame,
+	tapHint: TextLabel,
 	buyButton: TextButton,
 	buyLabel: TextLabel,
 	buyPrice: TextLabel,
@@ -272,6 +274,23 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 	fill.Parent = track
 	Bubbly.corner(fill, 6)
 
+	--[[
+		The idle prompt.
+
+		The bar crosses in 0.6 seconds at one Lemonade Stand and then sits empty, so a player
+		who has not clicked sees a permanently empty bar and reasonably concludes it is broken.
+		This says what to do instead of leaving a blank trough, and hides itself the moment a
+		cycle is running.
+	]]
+	local tapHint = Bubbly.label("TapHint", track, {
+		text = "TAP TO COLLECT",
+		size = 13,
+		alignment = Enum.TextXAlignment.Center,
+		strokeThickness = Theme.metric.textStrokeSmall,
+	})
+	tapHint.Size = UDim2.fromScale(1, 1)
+	tapHint.ZIndex = 5
+
 	local buyButton, buyLabel = Bubbly.button("Buy", container, {
 		fill = Theme.colour.green,
 		outline = Theme.colour.text,
@@ -309,7 +328,9 @@ local function buildRow(self: Panel, id: Types.BusinessId): Row
 		units = units,
 		payout = payout,
 		milestone = milestone,
+		progressTrack = track,
 		progressFill = fill,
+		tapHint = tapHint,
 		buyButton = buyButton,
 		buyLabel = buyLabel,
 		buyPrice = buyPrice,
@@ -480,6 +501,10 @@ function Panel.notifyPaid(self: Panel, id: Types.BusinessId, amount: Types.BigNu
 		return
 	end
 
+	-- The bar itself is too quick to read at a 0.6s cycle; the flash is what makes a completed
+	-- cycle register.
+	Bubbly.flash(row.progressTrack, Theme.colour.track, Theme.colour.green)
+
 	Bubbly.popNumber(
 		self.surface,
 		`+{Format.money(amount)}`,
@@ -497,9 +522,11 @@ function Panel.step(self: Panel, now: number): ()
 	for _, row in self.rows do
 		if not row.isCycling or row.cycleSeconds <= 0 then
 			row.progressFill.Size = UDim2.fromScale(0, 1)
+			row.tapHint.Visible = true
 			continue
 		end
 
+		row.tapHint.Visible = false
 		local elapsed = row.cycleElapsed + (now - row.receivedAt)
 		local fraction = math.clamp(elapsed / row.cycleSeconds, 0, 1)
 		row.progressFill.Size = UDim2.fromScale(fraction, 1)
