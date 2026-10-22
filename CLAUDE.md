@@ -25,9 +25,13 @@ design work — the source game has no movement, no items, no teams and no ranke
 
 Phase 1 complete: the number system and the economy core. `src/shared/Economy` holds BigNumber,
 Format, Cost, Cycle, Revenue and Angels; `src/shared/Config/Businesses.luau` holds the exact
-Earth table. All pure, all tested. Nothing is on screen yet, by design.
+Earth table. All pure.
 
-Next: Phase 2, the board and the panel behind it. See `docs/ROADMAP.md`.
+Phase 2 **built but not playtested**: a grey-box plot with a board, server-authoritative plot
+state, a production tick, and the panel with one business row. The playtest gate has not been
+run, so nothing here is confirmed to feel right.
+
+Next: run the Phase 2 playtest. Then Phase 3, all ten businesses. See `docs/ROADMAP.md`.
 
 ## Commands
 
@@ -126,6 +130,20 @@ renderer and a test harness, driven through Rojo and the Studio MCP server.
 - Underscore-prefixed names for intentionally unused arguments
 - No `wait()`, no `spawn()`, no `delay()` — use `task.*`
 - Every `:Connect` has a disconnect path; every instance created has a destroy path
+
+### A luau-lsp trap worth knowing
+
+String-literal unions (`BuyMode`, `DeviceTier`) lose their literalness in the pinned luau-lsp in
+two places:
+
+- **Narrowing an optional one widens it to `string`.** Both `if m == nil then return end` and
+  `if m then return m end` discard the type, so the value then fails every downstream check.
+- **A declared multi-return annotation is not applied to the inferred branches**, so a helper
+  typed `(BuyMode, boolean)` hands back a union of four widened strings.
+
+What does work: assigning a literal to a local with an explicit annotation, and a definite value
+plus a flag instead of an optional. `Handlers.onBuyUnits` and `Device.tier` are both written that
+way on purpose and say so in comments — the tidier spelling is the broken one.
 
 ## Workflow
 

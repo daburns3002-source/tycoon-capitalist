@@ -1,0 +1,186 @@
+--!strict
+--[[
+	Plot records -- the authoritative state of one player's game.
+
+	Keyed per player and passed explicitly. There is no module-level "current plot" here even
+	though the game is solo, because retrofitting shared plots or cross-server ranked onto
+	singleton state is how this kind of project dies in Phase 8. CLAUDE.md, non-negotiable 5.
+
+	This module constructs and mutates records. It does not decide economics -- every number
+	comes from the pure modules in Shared.Economy -- and it does not touch the network or the
+	world.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Angels = require(Shared.Economy.Angels)
+local BigNumber = require(Shared.Economy.BigNumber)
+local Businesses = require(Shared.Config.Businesses)
+local Cost = require(Shared.Economy.Cost)
+local Cycle = require(Shared.Economy.Cycle)
+local Revenue = require(Shared.Economy.Revenue)
+local Types = require(Shared.Types)
+
+type BigNumber = Types.BigNumber
+type PlotState = Types.PlotState
+type BusinessState = Types.BusinessState
+
+local PlotState = {}
+
+--[[
+	Businesses unlocked in Phase 2.
+
+	The economy knows all ten; the plot exposes one. Keeping the gate here rather than trimming
+	the config means Phase 3 is a change to this list and nothing else.
+]]
+local UNLOCKED: { Types.BusinessId } = { "LemonadeStand" }
+
+PlotState.unlocked = UNLOCKED
+
+local function newBusinessState(): BusinessState
+	return {
+		unitsOwned = 0,
+		hasManager = false,
+		hasAccountant = false,
+		cycleStartedAt = nil,
+		profitMultiplier = 1,
+	}
+end
+
+--[[
+	A fresh plot.
+
+	The player starts owning one free Lemonade Stand, exactly as the source game does, which is
+	why the first purchase is unit 2 at $4 rather than unit 1 at $3.74.
+]]
+function PlotState.new(userId: number): PlotState
+	local businesses: { [Types.BusinessId]: BusinessState } = {}
+	for _, id in UNLOCKED do
+		businesses[id] = newBusinessState()
+	end
+
+	businesses.LemonadeStand.unitsOwned = 1
+
+	return {
+		userId = userId,
+		cash = BigNumber.zero,
+		lifetimeEarnings = BigNumber.zero,
+		earningsBeforeThisRun = BigNumber.zero,
+		angels = 0,
+		angelsSacrificed = 0,
+		allProfitMultiplier = 1,
+		angelEffectiveness = 1,
+		businesses = businesses,
+	}
+end
+
+--[[ Unit counts by business id, for the all-business milestone calculation. ]]
+function PlotState.unitsById(plot: PlotState): { [Types.BusinessId]: number }
+	local units: { [Types.BusinessId]: number } = {}
+	for id, state in plot.businesses do
+		units[id] = state.unitsOwned
+	end
+	return units
+end
+
+function PlotState.globalMilestones(plot: PlotState): number
+	return Cycle.globalMilestonesReached(PlotState.unitsById(plot))
+end
+
+--[[ A business's current cycle length, with every milestone halving applied. ]]
+function PlotState.cycleSeconds(plot: PlotState, id: Types.BusinessId): number
+	local config = Businesses.byId[id]
+	local state = plot.businesses[id]
+	if config == nil or state == nil then
+		error(`PlotState.cycleSeconds: unknown business {id}`, 2)
+	end
+
+	return Cycle.duration(config, state.unitsOwned, PlotState.globalMilestones(plot))
+end
+
+--[[ What one completed cycle of this business pays right now. ]]
+function PlotState.payout(plot: PlotState, id: Types.BusinessId): BigNumber
+	local config = Businesses.byId[id]
+	local state = plot.businesses[id]
+	if config == nil or state == nil then
+		error(`PlotState.payout: unknown business {id}`, 2)
+	end
+
+	return Revenue.perCycle(
+		config,
+		state.unitsOwned,
+		state.profitMultiplier,
+		plot.allProfitMultiplier,
+		plot.angels,
+		plot.angelEffectiveness
+	)
+end
+
+--[[
+	Credit money.
+
+	Both the spendable balance and the lifetime total move together, and lifetime earnings only
+	ever go up -- it is the basis of the angel formula, so a spend must never touch it.
+]]
+function PlotState.credit(plot: PlotState, amount: BigNumber): ()
+	if BigNumber.isZero(amount) or amount.mantissa < 0 then
+		return
+	end
+
+	plot.cash = BigNumber.add(plot.cash, amount)
+	plot.lifetimeEarnings = BigNumber.add(plot.lifetimeEarnings, amount)
+end
+
+--[[
+	Spend money, if there is enough.
+
+	Returns false and changes nothing when the player cannot afford it, so a caller can treat a
+	failed purchase as a no-op rather than having to check first and risk a race.
+]]
+function PlotState.trySpend(plot: PlotState, amount: BigNumber): boolean
+	if amount.mantissa < 0 then
+		return false
+	end
+	if BigNumber.lt(plot.cash, amount) then
+		return false
+	end
+
+	plot.cash = BigNumber.sub(plot.cash, amount)
+	return true
+end
+
+--[[ How many units a buy mode resolves to, given what the player can actually afford. ]]
+function PlotState.quantityForMode(
+	plot: PlotState,
+	id: Types.BusinessId,
+	mode: Types.BuyMode
+): number
+	local config = Businesses.byId[id]
+	local state = plot.businesses[id]
+	if config == nil or state == nil then
+		return 0
+	end
+
+	if mode == "max" then
+		return Cost.maxAffordable(config, state.unitsOwned, plot.cash, Businesses.maxUnits)
+	end
+
+	local requested = if mode == "x1" then 1 elseif mode == "x10" then 10 else 100
+	local headroom = Businesses.maxUnits - state.unitsOwned
+	return math.min(requested, math.max(headroom, 0))
+end
+
+--[[
+	Angels this plot would gain by resetting now. Phase 6 consumes this; the panel shows it
+	from Phase 2 so the number is visible long before the button exists.
+]]
+function PlotState.pendingAngels(plot: PlotState): number
+	return Angels.gainOnReset(
+		plot.lifetimeEarnings,
+		plot.earningsBeforeThisRun,
+		plot.angelsSacrificed
+	)
+end
+
+return table.freeze(PlotState)
