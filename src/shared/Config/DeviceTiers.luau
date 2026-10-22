@@ -10,6 +10,11 @@
 	declaration -- but they are declared now so Phase 7's art pass has a contract to hit instead
 	of a conversation to have.
 
+	These govern things that genuinely cost frames: shadows, particles, draw distance, model
+	detail. They deliberately do not throttle UI interpolation. A progress bar is a handful of
+	UDim2 writes per frame and throttling it only made it look choppy -- the saving was
+	imaginary and the cost was visible.
+
 	Pure data. No logic, no functions, frozen.
 ]]
 
@@ -22,9 +27,6 @@ return table.freeze({
 		maxParticles = 24,
 		numberPopsPerSecond = 4,
 		panelBlur = false,
-		-- Lower UI refresh: the progress bar is interpolated locally, so a slower push is
-		-- invisible and saves a surprising amount on a mid-range Android.
-		hudUpdatesPerSecond = 10,
 	}),
 
 	Medium = table.freeze({
@@ -34,7 +36,6 @@ return table.freeze({
 		maxParticles = 64,
 		numberPopsPerSecond = 8,
 		panelBlur = true,
-		hudUpdatesPerSecond = 20,
 	}),
 
 	High = table.freeze({
@@ -44,6 +45,5 @@ return table.freeze({
 		maxParticles = 160,
 		numberPopsPerSecond = 16,
 		panelBlur = true,
-		hudUpdatesPerSecond = 30,
 	}),
 })

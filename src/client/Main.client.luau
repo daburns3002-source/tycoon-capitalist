@@ -23,7 +23,6 @@ local Panel = require(script.Parent.UI.Panel)
 local CLOSE_ACTION = "ClosePanel"
 
 local function main(): ()
-	local budget = Device.budget()
 	local hud = Hud.new()
 	local panel = Panel.new()
 
@@ -80,24 +79,20 @@ local function main(): ()
 	end, false, Enum.KeyCode.Escape, Enum.KeyCode.ButtonB)
 
 	--[[
-		Drive the progress bars.
+		Drive the progress bars, every frame.
 
-		Throttled to the device's HUD budget rather than running every frame: the bars are
-		interpolated cosmetics, and on a phone there is no reason to recompute them 60 times a
-		second. A desktop gets 30, a phone 10, and neither can tell from looking.
+		This used to be throttled to the device tier's HUD rate -- 30/sec on desktop, 10 on a
+		phone -- which was premature optimisation and visibly steppy. The work is one UDim2
+		assignment per visible business row, at most ten of them, and only while the panel is
+		open. That is nothing next to rendering the frame it rides on, and a progress bar is the
+		one thing in this UI whose entire job is to look smooth.
+
+		Device tiering still governs what actually costs frames: shadows, particles, draw
+		distance and building detail.
 	]]
-	local interval = 1 / budget.hudUpdatesPerSecond
-	local since = 0
-
 	table.insert(
 		connections,
-		RunService.RenderStepped:Connect(function(delta: number)
-			since += delta
-			if since < interval then
-				return
-			end
-			since = 0
-
+		RunService.RenderStepped:Connect(function()
 			if panel.isOpen then
 				panel:step(os.clock())
 			end
