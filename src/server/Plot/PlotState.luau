@@ -14,6 +14,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local AngelUpgrades = require(Shared.Config.AngelUpgrades)
 local Angels = require(Shared.Economy.Angels)
 local BigNumber = require(Shared.Economy.BigNumber)
 local Businesses = require(Shared.Config.Businesses)
@@ -83,7 +84,31 @@ function PlotState.new(userId: number): PlotState
 		angelEffectiveness = 1,
 		businesses = businesses,
 		upgradesOwned = {},
+		angelUpgradesOwned = {},
 	}
+end
+
+--[[
+	How many units of a business a run begins with.
+
+	One free Lemonade Stand as the source game gives, plus whatever the "Swap", "Surge" and
+	"Merger" angel upgrades grant. Those survive a reset, which is what makes each run start
+	further along than the last and is most of the reward for prestiging at all.
+]]
+function PlotState.startingUnits(plot: PlotState, id: Types.BusinessId): number
+	local units = if id == "LemonadeStand" then 1 else 0
+
+	for _, config in AngelUpgrades.list do
+		if
+			config.kind == "startingUnits"
+			and config.target == id
+			and plot.angelUpgradesOwned[config.id]
+		then
+			units += config.amount
+		end
+	end
+
+	return units
 end
 
 --[[
@@ -148,6 +173,23 @@ function PlotState.recomputeMultipliers(plot: PlotState): ()
 		else
 			local current = perBusiness[config.target] or 1
 			perBusiness[config.target] = current * config.multiplier
+		end
+	end
+
+	--[[
+		Angel upgrades, which outlive a reset. Folded in here with everything else so there is
+		one place that answers "what is this business's multiplier", and so a reset that clears
+		cash upgrades cannot accidentally clear these.
+	]]
+	for _, config in AngelUpgrades.list do
+		if not plot.angelUpgradesOwned[config.id] then
+			continue
+		end
+
+		if config.kind == "allProfit" then
+			allMultiplier *= config.amount
+		elseif config.kind == "effectiveness" then
+			effectiveness += config.amount
 		end
 	end
 
@@ -301,8 +343,15 @@ function PlotState.reset(plot: PlotState): number
 		state.profitMultiplier = 1
 	end
 
-	-- The free starting stand comes back, exactly as a new plot gets one.
-	plot.businesses.LemonadeStand.unitsOwned = 1
+	--[[
+		The run restarts from whatever the angel upgrades have bought.
+
+		`angelUpgradesOwned` is deliberately not cleared above: those are what the sacrificed
+		angels paid for, and the angels are not coming back.
+	]]
+	for id, state in plot.businesses do
+		state.unitsOwned = PlotState.startingUnits(plot, id)
+	end
 
 	table.clear(plot.upgradesOwned)
 	-- Derived from the now-empty set, so the multipliers cannot survive the reset that cleared
@@ -310,6 +359,24 @@ function PlotState.reset(plot: PlotState): number
 	PlotState.recomputeMultipliers(plot)
 
 	return gained
+end
+
+--[[
+	Sacrifice angels for an angel upgrade.
+
+	Both sides of the trade happen here: the angels leave `angels`, so the +2%-each bonus drops
+	immediately, and they are added to `angelsSacrificed`, which the reset formula reads to stop
+	a future reset refunding what was spent. Getting only one of those right would either make
+	spending free or make it cost twice.
+]]
+function PlotState.trySacrifice(plot: PlotState, cost: number): boolean
+	if cost <= 0 or plot.angels < cost then
+		return false
+	end
+
+	plot.angels -= cost
+	plot.angelsSacrificed += cost
+	return true
 end
 
 --[[

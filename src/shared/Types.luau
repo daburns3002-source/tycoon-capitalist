@@ -79,6 +79,14 @@ export type PlotState = {
 		independently, so there is one source of truth and no way for them to drift apart.
 	]]
 	upgradesOwned: { [string]: boolean },
+	--[[
+		Angel upgrades bought, by id.
+
+		Unlike cash upgrades these survive a reset -- they are what the angels were spent on, and
+		the angels are not coming back. See Config/AngelUpgrades for the reasoning and the one
+		place the source material is ambiguous.
+	]]
+	angelUpgradesOwned: { [string]: boolean },
 }
 
 --[[
@@ -114,6 +122,29 @@ export type UnlockConfig = {
 	kind: "speed" | "profit",
 	target: string,
 	multiplier: number,
+}
+
+--[[
+	One angel upgrade: bought by sacrificing Angel Investors, permanent thereafter.
+
+	`kind` is "allProfit" (multiply every business by `amount`), "effectiveness" (add `amount`
+	to angel effectiveness, so 0.02 takes each angel from +2% to +4%), or "startingUnits" (grant
+	`amount` free units of `target` at the start of every run).
+]]
+export type AngelUpgradeConfig = {
+	id: string,
+	displayName: string,
+	cost: number,
+	kind: "allProfit" | "effectiveness" | "startingUnits",
+	target: string,
+	amount: number,
+}
+
+--[[ What the client is told about one angel upgrade. ]]
+export type AngelUpgradeSnapshot = {
+	id: string,
+	owned: boolean,
+	affordable: boolean,
 }
 
 --[[ What the client is told about one unlock: earned, and how close the next one is. ]]
@@ -202,6 +233,7 @@ export type PlotSnapshot = {
 	businesses: { BusinessSnapshot },
 	upgrades: { UpgradeSnapshot },
 	unlocks: { UnlockSnapshot },
+	angelUpgrades: { AngelUpgradeSnapshot },
 }
 
 return nil

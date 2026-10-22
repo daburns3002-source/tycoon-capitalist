@@ -29,6 +29,7 @@ local Cycle = require(Economy.Cycle)
 local Format = require(Economy.Format)
 local Revenue = require(Economy.Revenue)
 local ServerScriptService = game:GetService("ServerScriptService")
+local AngelUpgradeConfig = require(Shared.Config.AngelUpgrades)
 local FakeStore = require(ServerStorage.Tests.FakeStore)
 local Offline = require(ServerScriptService.Server.Tick.Offline)
 local PlotState = require(ServerScriptService.Server.Plot.PlotState)
@@ -807,6 +808,80 @@ local function testSessionLock(): (number, number)
 	return t:finish()
 end
 
+local function testAngelUpgrades(): (number, number)
+	local t = TestRunner.new("AngelUpgrades")
+
+	local plot = PlotState.new(21)
+	plot.angels = 150000
+
+	-- Spending costs the angels *and* their bonus. That is the trade the whole layer rests on.
+	local before = Revenue.angelMultiplier(plot.angels, plot.angelEffectiveness)
+	t:equals("sacrifice succeeds when affordable", PlotState.trySacrifice(plot, 10000), true)
+	t:equals("angels are spent", plot.angels, 140000)
+	t:equals("and recorded as sacrificed", plot.angelsSacrificed, 10000)
+	t:isTrue("the profit bonus drops", Revenue.angelMultiplier(plot.angels, 1) < before)
+
+	t:equals("cannot overspend", PlotState.trySacrifice(plot, 999999999), false)
+	t:equals("and nothing changed", plot.angels, 140000)
+
+	-- All-profit angel upgrades stack with cash ones rather than replacing them.
+	plot.angelUpgradesOwned.AngelSacrifice = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("angel all-profit applies", plot.allProfitMultiplier, 3)
+
+	plot.upgradesOwned.Monopoly = true
+	PlotState.recomputeMultipliers(plot)
+	t:equals("and stacks with the cash one", plot.allProfitMultiplier, 9)
+
+	-- Effectiveness is additive: +2% takes each angel from 2% to 4%.
+	plot.angelUpgradesOwned.AngelicMutiny = true
+	PlotState.recomputeMultipliers(plot)
+	t:equalsApprox("effectiveness rises", plot.angelEffectiveness, 1.02, 1e-12)
+	t:equalsApprox(
+		"50 angels now give more than x2",
+		Revenue.angelMultiplier(50, plot.angelEffectiveness),
+		1 + 50 * 0.02 * 1.02,
+		1e-12
+	)
+
+	-- Starting-units upgrades change what a run begins with.
+	local head = PlotState.new(22)
+	t:equals("a plain run starts with one stand", PlotState.startingUnits(head, "LemonadeStand"), 1)
+	t:equals("and nothing else", PlotState.startingUnits(head, "CarWash"), 0)
+
+	head.angelUpgradesOwned.CarWashSwap = true
+	head.angelUpgradesOwned.CarWashSurge = true
+	t:equals("swap and surge stack", PlotState.startingUnits(head, "CarWash"), 60)
+
+	-- A reset keeps the angel upgrades and starts the run from what they grant.
+	head.lifetimeEarnings = BigNumber.fromParts(1, 15)
+	head.businesses.LemonadeStand.unitsOwned = 400
+	head.businesses.CarWash.unitsOwned = 7
+	head.businesses.Bank.hasManager = true
+	head.upgradesOwned.LittleUmbrellas = true
+	PlotState.reset(head)
+
+	t:equals("angel upgrades survive the reset", head.angelUpgradesOwned.CarWashSwap, true)
+	t:equals("cash upgrades do not", next(head.upgradesOwned), nil)
+	t:equals("managers do not", head.businesses.Bank.hasManager, false)
+	t:equals("the run starts from the head start", head.businesses.CarWash.unitsOwned, 60)
+	t:equals("and the free stand is still there", head.businesses.LemonadeStand.unitsOwned, 1)
+
+	-- Every angel upgrade must point at something real.
+	local bad = nil
+	for _, config in AngelUpgradeConfig.list do
+		local valid = config.target == "all"
+			or config.target == "angel"
+			or Businesses.byId[config.target] ~= nil
+		if not valid and bad == nil then
+			bad = `{config.id} -> {config.target}`
+		end
+	end
+	t:record("every angel upgrade targets something real", bad == nil, bad)
+
+	return t:finish()
+end
+
 function Spec.run(): boolean
 	print("[economy] running suite")
 
@@ -823,6 +898,7 @@ function Spec.run(): boolean
 		testPersistence,
 		testOfflineEarnings,
 		testSessionLock,
+		testAngelUpgrades,
 	}
 
 	local passed, failed = 0, 0

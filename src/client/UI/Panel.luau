@@ -22,6 +22,7 @@ local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local AngelMath = require(Shared.Economy.Angels)
+local AngelUpgrades = require(Shared.Config.AngelUpgrades)
 local BigNumber = require(Shared.Economy.BigNumber)
 local Businesses = require(Shared.Config.Businesses)
 local Format = require(Shared.Economy.Format)
@@ -102,6 +103,8 @@ export type Panel = typeof(setmetatable(
 		resetButton: TextButton,
 		resetLabel: TextLabel,
 		resetArmed: boolean,
+		angelShop: ScrollingFrame,
+		angelRows: { [string]: { button: TextButton, price: TextLabel, container: Frame } },
 		upgradeRows: { [string]: { button: TextButton, price: TextLabel, container: Frame } },
 		tabButtons: { [string]: TextButton },
 		activeTab: string,
@@ -394,6 +397,97 @@ local function buildAngelView(self: Panel, parent: Frame): ()
 			Remotes.get(Remotes.toServer.PerformReset):FireServer()
 		end)
 	)
+
+	--[[
+		The angel shop, below the reset.
+
+		This is what makes a reset a decision rather than a button. Angels spent here are gone
+		permanently along with their +2% each, so the list sits directly under the thing that
+		earns them: seeing what the angels are *for* while deciding whether to take more is the
+		entire tension of a prestige layer.
+	]]
+	local shopTitle = Bubbly.label("ShopTitle", view, {
+		text = "SPEND ANGELS",
+		size = 17,
+		alignment = Enum.TextXAlignment.Center,
+		colour = Theme.colour.textDim,
+		strokeThickness = Theme.metric.textStrokeSmall,
+	})
+	shopTitle.Size = UDim2.new(1, -40, 0, 22)
+	shopTitle.Position = UDim2.fromOffset(20, 304)
+
+	local shop = Instance.new("ScrollingFrame")
+	shop.Name = "AngelShop"
+	shop.BackgroundTransparency = 1
+	shop.BorderSizePixel = 0
+	shop.Size = UDim2.new(1, -24, 1, -336)
+	shop.Position = UDim2.fromOffset(12, 332)
+	shop.CanvasSize = UDim2.new()
+	shop.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	shop.ScrollBarThickness = 6
+	shop.ScrollBarImageColor3 = Theme.colour.textDim
+	shop.ZIndex = 3
+	shop.Parent = view
+	self.angelShop = shop
+
+	local shopLayout = Instance.new("UIListLayout")
+	shopLayout.Padding = UDim.new(0, 8)
+	shopLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	shopLayout.Parent = shop
+
+	for index, config in AngelUpgrades.list do
+		local row = Bubbly.panel(config.id, shop, Theme.colour.row)
+		row.Size = UDim2.new(1, -8, 0, 62)
+		row.LayoutOrder = index
+
+		local name = Bubbly.label("Name", row, { text = config.displayName, size = 17 })
+		name.Size = UDim2.new(1, -170, 0, 22)
+		name.Position = UDim2.fromOffset(14, 8)
+
+		local effect = if config.kind == "allProfit"
+			then `all businesses profit x{config.amount}`
+			elseif config.kind == "effectiveness" then `each angel gives +{math.floor(
+				config.amount * 100 + 0.5
+			)}% more`
+			else `start every run with +{config.amount} {Businesses.byId[config.target].displayName}`
+
+		local detail = Bubbly.label("Effect", row, {
+			text = effect,
+			size = 13,
+			colour = Theme.colour.textDim,
+			strokeThickness = Theme.metric.textStrokeSmall,
+		})
+		detail.Size = UDim2.new(1, -170, 0, 20)
+		detail.Position = UDim2.fromOffset(14, 32)
+
+		local buy, buyLabel = Bubbly.button("Buy", row, {
+			fill = Theme.colour.money,
+			outline = Theme.colour.text,
+			corner = Theme.metric.chipCorner,
+			textSize = 13,
+		})
+		buy.Size = UDim2.fromOffset(150, 44)
+		buy.Position = UDim2.new(1, -160, 0, 9)
+		buyLabel.Size = UDim2.new(1, 0, 0, 18)
+		buyLabel.Position = UDim2.fromOffset(0, 4)
+
+		local price = Bubbly.label("Price", buy, {
+			size = 16,
+			alignment = Enum.TextXAlignment.Center,
+			gradient = Theme.gradient.count,
+		})
+		price.Size = UDim2.new(1, 0, 0, 22)
+		price.Position = UDim2.fromOffset(0, 20)
+
+		self.angelRows[config.id] = { button = buy, price = price, container = row }
+
+		table.insert(
+			self.connections,
+			buy.Activated:Connect(function()
+				Remotes.get(Remotes.toServer.BuyAngelUpgrade):FireServer(config.id)
+			end)
+		)
+	end
 end
 
 --[[
@@ -788,6 +882,8 @@ function Panel.new(): Panel
 		resetButton = nil :: any,
 		resetLabel = nil :: any,
 		resetArmed = false,
+		angelShop = nil :: any,
+		angelRows = {},
 		upgradeRows = {},
 		tabButtons = {},
 		activeTab = "businesses",
@@ -1115,6 +1211,25 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 		self.resetButton.BackgroundColor3 = Theme.colour.panelDeep
 	end
 	self.angelNext.Text = `next angel at {Format.money(snapshot.nextAngelAt)} lifetime earnings`
+
+	for _, upgrade in snapshot.angelUpgrades do
+		local widget = self.angelRows[upgrade.id]
+		if widget == nil then
+			continue
+		end
+
+		local config = AngelUpgrades.byId[upgrade.id]
+		local label = widget.button:FindFirstChild("Label")
+		if label and label:IsA("TextLabel") then
+			label.Text = if upgrade.owned then "OWNED" else "SACRIFICE"
+		end
+		widget.price.Text = if upgrade.owned then "" else `{Format.integer(config.cost)} angels`
+		widget.button.BackgroundColor3 = if upgrade.owned
+			then Theme.colour.greenDeep
+			elseif upgrade.affordable then Theme.colour.money
+			else Theme.colour.panelDeep
+		widget.container.BackgroundTransparency = if upgrade.owned then 0.4 else 0
+	end
 
 	for _, unlock in snapshot.unlocks do
 		local widget = self.unlockRows[unlock.id]

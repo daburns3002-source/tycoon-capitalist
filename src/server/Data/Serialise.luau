@@ -54,6 +54,7 @@ export type SavedProfile = {
 	angelsSacrificed: number,
 	businesses: { [string]: SavedBusiness },
 	upgrades: { string },
+	angelUpgrades: { string },
 }
 
 --[[ Plot to stored table. `savedAt` is wall-clock, since offline accrual depends on it. ]]
@@ -77,6 +78,16 @@ function Serialise.save(plot: Types.PlotState): SavedProfile
 	end
 	table.sort(upgrades)
 
+	-- Angel upgrades outlive a reset, so losing them to a bad save would cost the player the
+	-- angels as well as the upgrade -- the angels are already spent and do not come back.
+	local angelUpgrades: { string } = {}
+	for id, owned in plot.angelUpgradesOwned do
+		if owned then
+			table.insert(angelUpgrades, id)
+		end
+	end
+	table.sort(angelUpgrades)
+
 	return {
 		version = SCHEMA_VERSION,
 		savedAt = os.time(),
@@ -87,6 +98,7 @@ function Serialise.save(plot: Types.PlotState): SavedProfile
 		angelsSacrificed = plot.angelsSacrificed,
 		businesses = businesses,
 		upgrades = upgrades,
+		angelUpgrades = angelUpgrades,
 	}
 end
 
@@ -161,6 +173,14 @@ function Serialise.load(
 		for _, id in profile.upgrades do
 			if typeof(id) == "string" then
 				plot.upgradesOwned[id] = true
+			end
+		end
+	end
+
+	if typeof(profile.angelUpgrades) == "table" then
+		for _, id in profile.angelUpgrades do
+			if typeof(id) == "string" then
+				plot.angelUpgradesOwned[id] = true
 			end
 		end
 	end

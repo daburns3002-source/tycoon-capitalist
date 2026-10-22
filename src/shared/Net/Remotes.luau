@@ -49,6 +49,9 @@ local TO_SERVER: { [string]: string } = {
 		would pay nothing, which is the case a confirmation dialog exists to prevent.
 	]]
 	PerformReset = "PerformReset",
+	-- "Sacrifice angels for this upgrade." Payload: upgradeId (string). The angels are gone
+	-- permanently; the upgrade is not.
+	BuyAngelUpgrade = "BuyAngelUpgrade",
 	-- "I selected a buy mode." Payload: mode ("x1" | "x10" | "x100" | "max").
 	--
 	-- The mode has to be server state, not client state, because the server prices the selected

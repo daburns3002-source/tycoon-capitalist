@@ -15,6 +15,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local AngelUpgrades = require(Shared.Config.AngelUpgrades)
 local Angels = require(Shared.Economy.Angels)
 local BigNumber = require(Shared.Economy.BigNumber)
 local Businesses = require(Shared.Config.Businesses)
@@ -118,6 +119,15 @@ function Snapshot.build(entry: PlotService.Entry, now: number): Types.PlotSnapsh
 		})
 	end
 
+	local angelUpgrades: { Types.AngelUpgradeSnapshot } = {}
+	for _, config in AngelUpgrades.list do
+		table.insert(angelUpgrades, {
+			id = config.id,
+			owned = plot.angelUpgradesOwned[config.id] == true,
+			affordable = plot.angels >= config.cost,
+		})
+	end
+
 	return {
 		cash = plot.cash,
 		lifetimeEarnings = plot.lifetimeEarnings,
@@ -129,6 +139,7 @@ function Snapshot.build(entry: PlotService.Entry, now: number): Types.PlotSnapsh
 		businesses = businesses,
 		upgrades = upgrades,
 		unlocks = unlocks,
+		angelUpgrades = angelUpgrades,
 	}
 end
 

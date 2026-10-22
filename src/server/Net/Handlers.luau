@@ -22,6 +22,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local AngelUpgrades = require(Shared.Config.AngelUpgrades)
 local Businesses = require(Shared.Config.Businesses)
 local Cost = require(Shared.Economy.Cost)
 local Remotes = require(Shared.Net.Remotes)
@@ -334,6 +335,50 @@ local function onPerformReset(player: Player): ()
 end
 
 --[[
+	"Sacrifice angels for this upgrade."
+
+	Bought once, permanent, and paid for with a currency that does not come back. The angels
+	leave the balance before the upgrade is granted, so a failure cannot leave a player charged
+	for nothing.
+]]
+local function onBuyAngelUpgrade(player: Player, upgradeId: unknown): ()
+	local intent = Remotes.toServer.BuyAngelUpgrade
+	local entry = PlotService.get(player)
+	if entry == nil then
+		reject(player, intent, "no plot")
+		return
+	end
+	if not PlotService.mayAct(player, entry) then
+		reject(player, intent, "not your plot")
+		return
+	end
+	if typeof(upgradeId) ~= "string" then
+		reject(player, intent, "bad upgrade id")
+		return
+	end
+
+	local config = AngelUpgrades.byId[upgradeId]
+	if config == nil then
+		reject(player, intent, "unknown upgrade")
+		return
+	end
+
+	local plot = entry.state
+	if plot.angelUpgradesOwned[config.id] then
+		reject(player, intent, "already owned")
+		return
+	end
+	if not PlotState.trySacrifice(plot, config.cost) then
+		reject(player, intent, "not enough angels")
+		return
+	end
+
+	plot.angelUpgradesOwned[config.id] = true
+	PlotState.recomputeMultipliers(plot)
+	Handlers.pushSnapshot(player, entry)
+end
+
+--[[
 	"I selected a buy mode."
 
 	The server holds the selection because it prices the selected batch for every row. Pushing a
@@ -390,6 +435,7 @@ function Handlers.bind(): ()
 	Remotes.get(Remotes.toServer.HireManager).OnServerEvent:Connect(onHireManager)
 	Remotes.get(Remotes.toServer.BuyUpgrade).OnServerEvent:Connect(onBuyUpgrade)
 	Remotes.get(Remotes.toServer.PerformReset).OnServerEvent:Connect(onPerformReset)
+	Remotes.get(Remotes.toServer.BuyAngelUpgrade).OnServerEvent:Connect(onBuyAngelUpgrade)
 	Remotes.get(Remotes.toServer.SetPanelOpen).OnServerEvent:Connect(onSetPanelOpen)
 end
 
