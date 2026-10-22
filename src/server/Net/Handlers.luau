@@ -55,10 +55,25 @@ local Handlers = {}
 	to the inferred branches (so a `(BuyMode, boolean)` helper returns a union of four widened
 	strings). Either way every downstream call stops type-checking.
 
-	Assigning a literal to a local with an explicit annotation involves no inference and no
-	narrowing, so it types correctly. It also happens to be the most legible spelling of a
-	whitelist, which is the one thing in this file that has to be obviously right on sight.
+	Assigning a literal to a field or a local with an explicit annotation involves no inference
+	and no narrowing, so it types correctly. It also happens to be the most legible spelling of
+	a whitelist, which is the one thing in this file that has to be obviously right on sight.
 ]]
+local function applyBuyMode(entry: PlotService.Entry, raw: unknown): boolean
+	if raw == "x1" then
+		entry.lastBuyMode = "x1"
+	elseif raw == "x10" then
+		entry.lastBuyMode = "x10"
+	elseif raw == "x100" then
+		entry.lastBuyMode = "x100"
+	elseif raw == "max" then
+		entry.lastBuyMode = "max"
+	else
+		return false
+	end
+
+	return true
+end
 
 local function reject(player: Player, intent: string, reason: string): ()
 	Remotes.get(Remotes.toClient.IntentRejected):FireClient(player, intent, reason)
@@ -144,27 +159,16 @@ local function onBuyUnits(player: Player, businessId: unknown, mode: unknown): (
 		return
 	end
 
-	local buyMode: Types.BuyMode
-	if mode == "x1" then
-		buyMode = "x1"
-	elseif mode == "x10" then
-		buyMode = "x10"
-	elseif mode == "x100" then
-		buyMode = "x100"
-	elseif mode == "max" then
-		buyMode = "max"
-	else
+	if not applyBuyMode(entry, mode) then
 		reject(player, intent, "bad buy mode")
 		return
 	end
-
-	entry.lastBuyMode = buyMode
 
 	local plot = entry.state
 	local state = plot.businesses[id]
 	local config = Businesses.byId[id]
 
-	local quantity = PlotState.quantityForMode(plot, id, buyMode)
+	local quantity = PlotState.quantityForMode(plot, id, entry.lastBuyMode)
 	if quantity <= 0 then
 		reject(player, intent, "cannot afford any")
 		return
@@ -184,6 +188,33 @@ local function onBuyUnits(player: Player, businessId: unknown, mode: unknown): (
 	end
 
 	PlotBuilder.updateBuilding(entry.world, id, state.unitsOwned)
+	Handlers.pushSnapshot(player, entry)
+end
+
+--[[
+	"I selected a buy mode."
+
+	The server holds the selection because it prices the selected batch for every row. Pushing a
+	snapshot straight back is the whole point: the new prices and affordable counts arrive in one
+	round trip, so the buttons update without the client ever pricing anything itself.
+]]
+local function onSetBuyMode(player: Player, mode: unknown): ()
+	local intent = Remotes.toServer.SetBuyMode
+	local entry = PlotService.get(player)
+	if entry == nil then
+		reject(player, intent, "no plot")
+		return
+	end
+	if not PlotService.mayAct(player, entry) then
+		reject(player, intent, "not your plot")
+		return
+	end
+
+	if not applyBuyMode(entry, mode) then
+		reject(player, intent, "bad buy mode")
+		return
+	end
+
 	Handlers.pushSnapshot(player, entry)
 end
 
@@ -213,6 +244,7 @@ end
 function Handlers.bind(): ()
 	Remotes.get(Remotes.toServer.StartCycle).OnServerEvent:Connect(onStartCycle)
 	Remotes.get(Remotes.toServer.BuyUnits).OnServerEvent:Connect(onBuyUnits)
+	Remotes.get(Remotes.toServer.SetBuyMode).OnServerEvent:Connect(onSetBuyMode)
 	Remotes.get(Remotes.toServer.SetPanelOpen).OnServerEvent:Connect(onSetPanelOpen)
 end
 

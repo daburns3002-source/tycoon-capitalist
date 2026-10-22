@@ -91,6 +91,23 @@ local function label(name: string, parent: Instance, font: Enum.Font, size: numb
 	return text
 end
 
+--[[
+	Paint the selected buy mode. UI only -- it tells the server nothing.
+
+	Split out from `setBuyMode` because it is needed in three places: on construction, when the
+	player taps a mode, and when a snapshot reports the server's mode. Only the middle one should
+	send an intent.
+]]
+local function highlightBuyMode(self: Panel, mode: Types.BuyMode): ()
+	self.buyMode = mode
+
+	for candidate, button in self.modeButtons do
+		local selected = candidate == mode
+		button.BackgroundColor3 = if selected then Theme.colour.accent else Theme.colour.rowSurface
+		button.TextColor3 = if selected then Theme.colour.panelBackdrop else Theme.colour.text
+	end
+end
+
 --[[ Header: the two numbers that matter, plus a way out. ]]
 local function buildHeader(self: Panel, parent: Frame): ()
 	local header = Instance.new("Frame")
@@ -377,21 +394,25 @@ function Panel.new(): Panel
 	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	rowLayout.Parent = holder
 
-	self:setBuyMode("x1")
+	-- Paint only. The server already starts every plot on x1, so there is nothing to tell it.
+	highlightBuyMode(self, "x1")
 	return self
 end
 
+--[[
+	The player tapped a buy mode.
+
+	Highlights immediately so the tap feels instant, then tells the server, which holds the
+	selection because it prices the selected batch for every row. Its snapshot comes straight
+	back with the new prices and affordable counts and confirms the highlight.
+
+	Sending the mode here is not optional. Firing only the panel-open flag -- which this used to
+	do -- left the server pricing x1 forever, and the next snapshot then overwrote the player's
+	selection back to x1. Caught in review before it reached a playtest.
+]]
 function Panel.setBuyMode(self: Panel, mode: Types.BuyMode): ()
-	self.buyMode = mode
-
-	for candidate, button in self.modeButtons do
-		local selected = candidate == mode
-		button.BackgroundColor3 = if selected then Theme.colour.accent else Theme.colour.rowSurface
-		button.TextColor3 = if selected then Theme.colour.panelBackdrop else Theme.colour.text
-	end
-
-	-- The server prices the selected mode, so ask it to re-send rather than pricing locally.
-	Remotes.get(Remotes.toServer.SetPanelOpen):FireServer(self.isOpen)
+	highlightBuyMode(self, mode)
+	Remotes.get(Remotes.toServer.SetBuyMode):FireServer(mode)
 end
 
 --[[ Apply a server snapshot. The only place panel numbers are set. ]]
@@ -440,15 +461,10 @@ function Panel.setSnapshot(self: Panel, snapshot: Types.PlotSnapshot): ()
 			else Theme.colour.rowSurface
 	end
 
+	-- The server is the authority on the selected mode, so reconcile rather than assume the
+	-- local highlight was right.
 	if self.buyMode ~= snapshot.buyMode then
-		self.buyMode = snapshot.buyMode
-		for candidate, button in self.modeButtons do
-			local selected = candidate == snapshot.buyMode
-			button.BackgroundColor3 = if selected
-				then Theme.colour.accent
-				else Theme.colour.rowSurface
-			button.TextColor3 = if selected then Theme.colour.panelBackdrop else Theme.colour.text
-		end
+		highlightBuyMode(self, snapshot.buyMode)
 	end
 end
 

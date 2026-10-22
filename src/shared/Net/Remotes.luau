@@ -31,6 +31,12 @@ local TO_SERVER: { [string]: string } = {
 	StartCycle = "StartCycle",
 	-- "Buy units." Payload: businessId (string), mode ("x1" | "x10" | "x100" | "max").
 	BuyUnits = "BuyUnits",
+	-- "I selected a buy mode." Payload: mode ("x1" | "x10" | "x100" | "max").
+	--
+	-- The mode has to be server state, not client state, because the server prices the selected
+	-- batch for every row in the snapshot. Without this intent the server never learns the
+	-- selection, keeps pricing x1, and the next snapshot overwrites the player's choice.
+	SetBuyMode = "SetBuyMode",
 	-- "I opened or closed the board." Payload: isOpen (boolean). Lets the server stop pushing
 	-- panel detail to a client that is not looking at it.
 	SetPanelOpen = "SetPanelOpen",
