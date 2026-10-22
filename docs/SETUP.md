@@ -97,28 +97,57 @@ Re-enable it with `-X POST` on the same path.
 
 ## Blocked on you
 
-### 1. Open a place in Roblox Studio
+### 1. Publishing, before persistence can be trusted
 
-The Studio MCP bridge is connected and I can see one Studio instance, but no place is open, so
-`get_studio_state` returns "Place is not open". Open any baseplate and I can drive playtests,
-read the console and take screenshots from Phase 2 onward.
+**This is the one that matters.** `game.PlaceId` is 0 -- the place has never been published --
+and DataStores are keyed to a universe, so Studio reports:
 
-Then install the **Rojo** plugin in Studio if it is not already there, so `rojo serve` can sync.
+```
+You must publish this place to the web to access DataStore.
+```
 
-### 2. Connect Codex to the repo
+Enabling *Studio Access to API Services* alone will not help; there is nothing for it to point
+at. Both steps are needed, in order:
 
-Authorise Codex on `github.com` for `daburns3002-source/tycoon-capitalist`. Reviews then land as
-PR comments I can read and act on directly. Conversation resolution is a required check on `main`,
-so Codex's findings gate the merge rather than being advisory.
+1. **File > Publish to Roblox As...** Private by default, so nobody can find or join it.
+2. **File > Game Settings > Security > Enable Studio Access to API Services**, then Save.
 
-### 3. Reference screenshots for the UI
+Deferred by choice -- the user does not want to publish yet. Until then, see the warning below.
 
-The brief asks for Steal an Egg's UI and font. Web search could not identify the typeface and the
-Roblox discover page would not load its results headlessly, so I need to see it: a few screenshots
-of the HUD, a shop or upgrade panel, and a button, or just the game's Roblox link.
+### 2. Reference screenshots for the UI
 
-This matters more than it sounds. Roblox only renders its built-in font enums unless a font asset
-is uploaded, so matching a custom typeface may mean uploading one — worth knowing before Phase 4.
+The Steal An Egg look was built from the game's store art and gameplay footage rather than from
+the live game, since web search could not identify the typeface. If an exact font match matters,
+Roblox renders only built-in font enums unless a font asset is uploaded, so that is the route.
+
+### 3. Codex usage limits
+
+Codex hit its code-review usage cap partway through Phase 3. Reviews stop until it resets, and
+`CLAUDE.md`'s rule is not to merge before Codex has actually reviewed -- so a run of commits on
+PR #3 is unreviewed.
+
+## Untested, and known to be
+
+**The save path has never run.** Serialisation round-trips and offline accrual are covered by
+152 assertions, but every one of those runs against in-memory state. The code that actually
+touches a DataStore -- `Data/Profiles.luau` -- has only ever executed its failure branch, because
+Studio cannot reach a DataStore for an unpublished place.
+
+Specifically untested:
+
+- that a profile written on one session is read back on the next
+- the session lock: that a second server is refused while a lock is fresh, that a stale lock can
+  be taken, and that a server which lost its lock abandons its write rather than winning it
+- autosave on its interval, and the `BindToClose` write
+- a welcome-back card driven by a real absence rather than a remote fired by hand
+
+The lock logic is the most dangerous untested code in the project: its failure mode is two
+servers writing one profile, and the loser silently discarding weeks of progress with nothing to
+tell the player it happened.
+
+That does not have to wait for publishing. `Profiles` could take its store as an argument rather
+than reaching for `DataStoreService` itself, which would let the suite drive the whole lock
+protocol against an in-memory fake. Worth doing before this ships, published or not.
 
 ## Deferred, deliberately
 
